@@ -287,25 +287,29 @@ def classify_participant_components_using_atlas(participant_data, new_data_path,
     W = np.load(fr'{session_folder_path}\{participant_ID}_{session_number}_{wavelet}_W.npy')
     plot_heatmap_classification(ica_electrode_order, participant_folder, session_folder, session_number, experinment_part_name, W, wavelet,
                                 new_data_path, image_path, centroids_lst)
-    print(f"finished classifying participant {participant_ID}_{session_number}")
+    print(f"finished classifying {participant_ID}_{session_number}")
 
 
 if __name__ == '__main__':
-    # ask user for the project_folder paths
-    project_folder = r"C:\Users\YH006_new\fEMG to Avatar\fEMG_to_Avatar"
+    # Get the absolute path of the current script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Define the project folder by going up two levels from the script's directory
+    project_folder = os.path.abspath(os.path.join(script_dir, '..'))
+
     x_coor = [377, 252, 224, 300, 307, 232, 301, 371, 448, 327, 263, 252, 345, 437, 446, 520]
     y_coor = [615, 570, 479, 532, 481, 430, 425, 448, 405, 394, 368, 299, 214, 206, 139, 150]
-    image_path = fr"{project_folder}/atlas/Paul_45_2_cropped.jpg"  # path to the image of the face to show the heatmaps on
+    atlas_folder = os.path.join(script_dir, 'atlas')
+    image_path = fr"{atlas_folder}/Paul_45_2_cropped.jpg"  # path to the image of the face to show the heatmaps on
     wavelet = 'db15'
     n = 17
     model_name = 'improved-kmeans'
 
     print("Loading the centroids...")
-    threshold = np.load(f"{project_folder}/atlas/threshold.npy")
+    threshold = np.load(f"{atlas_folder}/threshold.npy")
     # load the centroids
     centroids_lst = []
     for i in range(0, n):
-        current_centroid = np.load(f"{project_folder}/atlas/cluster_{i + 1}.npy")
+        current_centroid = np.load(f"{atlas_folder}/cluster_{i + 1}.npy")
         current_centroid = np.nan_to_num(current_centroid, nan=0)
         centroids_lst.append(current_centroid)
     #     ask the user to give the path of the new data

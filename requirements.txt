@@ -1,0 +1,17 @@
+moviepy
+pygame
+mne
+opencv-python
+python-picard
+numpy<2
+scipy
+matplotlib
+pandas
+pywavelets
+scikit-learn
+lazypredict
+seaborn
+keyboard
+pyedflib
+tqdm
+
