@@ -17,7 +17,10 @@ from scipy.stats import ttest_rel
 import seaborn as sns
 
 
-project_folder = r"C:\Users\YH006_new\fEMG to Avatar\fEMG_to_Avatar"
+# Get the absolute path of the current script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+# Define the project folder by going up two levels from the script's directory
+project_folder = os.path.abspath(os.path.join(script_dir, '..'))
 test_eeg = False
 save_results = False
 segments_length = 35  # length of each segment in seconds
@@ -92,21 +95,11 @@ def evaluate_models(X_train, X_test, Y_train, Y_test, X_label, cross_val=False):
         'JawForward', 'JawOpen', 'JawRight', 'MouthStretchRight', 'MouthDimpleRight', 'MouthLowerDownRight',
         'MouthRollLower', 'MouthShrugLower', 'MouthFrownRight', 'MouthClose'
     ]
-    # # Assuming blendshapes is a list of blendshape names in the original order
-    # blendshapes = [
-    #     'BrowDownRight', 'BrowInnerUp', 'BrowOuterUpRight', 'CheekPuff', 'CheekSquintRight', 'EyeBlinkRight',
-    #     'EyeLookDownRight', 'EyeLookInRight', 'EyeLookOutRight', 'EyeLookUpRight', 'EyeSquintRight',
-    #     'EyeWideRight', 'JawForward', 'JawOpen', 'JawRight', 'MouthClose', 'MouthDimpleRight',
-    #     'MouthFrownRight', 'MouthFunnel', 'MouthLowerDownRight', 'MouthPressRight', 'MouthPucker',
-    #     'MouthRight', 'MouthRollLower', 'MouthRollUpper', 'MouthShrugLower', 'MouthShrugUpper',
-    #     'MouthSmileRight', 'MouthStretchRight', 'MouthUpperUpRight', 'NoseSneerRight'
-    # ]
 
     # Assuming blendshapes is a list of blendshape names in the original order
     blendshapes_dict = {name: i for i, name in enumerate(blendshapes)}
     ordered_indices = [blendshapes_dict[name] for name in ordered_blendshapes]
 
-    # weights = weights[np.ix_(range(weights.shape[0]), ordered_indices)]
     # Reorder the rows of the weights matrix
     weights_ordered = weights[ordered_indices, :]
 
