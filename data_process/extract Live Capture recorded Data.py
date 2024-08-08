@@ -7,8 +7,8 @@ import os
 import sys
 from tqdm import tqdm
 
-folder_name = 'Hila'  # the name of the folder of the participant's data
-participant_number = '02'  # the number of the participant (next times it should be identical to the folder name
+folder_name = 'Dar'  # the name of the folder of the participant's data
+participant_number = '01'  # the number of the participant (next times it should be identical to the folder name
 scene = '001'  # the scene number of the recording
 session = '1'  # the session of the recording
 
@@ -20,12 +20,12 @@ anim_file_path = fr"{recordings_files_path}\{folder_name}\{folder_name}\SampleHe
 asset_file_path = fr"{recordings_files_path}\{folder_name}\[{scene}] {folder_name} [00{session}].asset"
 output_csv_path = fr'..\data\participant_{participant_number}\S{session}\participant_{participant_number}_S{session}_interpolated_relevant_only_right.csv'
 
-# # Check if the file already exists
-# if os.path.exists(output_csv_path):
-#     print(f"The file {output_csv_path} already exists.")
-#     sys.exit()  # Stop the program
-# else:
-#     print(f"The file {output_csv_path} does not exist. Proceeding with file creation.")
+# Check if the file already exists
+if os.path.exists(output_csv_path):
+    print(f"The file {output_csv_path} already exists.")
+    sys.exit()  # Stop the program
+else:
+    print(f"The file {output_csv_path} does not exist. Proceeding with file creation.")
 
 # relevant blendshapes withouht any of the left side of the face
 relevant_blendshapes = ['BrowDownRight', 'BrowInnerUp', 'BrowOuterUpRight', 'CheekPuff',
@@ -102,56 +102,12 @@ def extract_blendshape_data(anim_file_path, asset_file_path, output_csv_path):
     # Convert all columns except 'Timestamp' to numeric types
     df.iloc[:, 1:] = df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce')
 
-    # check for missing rows (timestamps)
-    # iterate over the first column (timestamps)
-    # index = 1
-    # missing_rows = 0
-    # # while index < len(df):
-    # for index in tqdm(range(1, len(df))):
-    #     if round(df.loc[index, 'Timestamp'] - df.loc[index - 1, 'Timestamp'], 3) != round(1/60, 3):
-    #
-    #         # check if it's a timestamp is miscalculated from the 60Hz sampling rate (16.66666667 ms intervals)
-    #         if not round(df.loc[index, 'Timestamp'] * 60, 5).is_integer():
-    #             # print("miscalculated timestamp at", index, df.loc[index, 'Timestamp'])
-    #             # calculate the correct timestamp
-    #             df.loc[index, 'Timestamp'] = round(df.loc[index - 1, 'Timestamp'] + 1 / 60, 5)
-    #             # print("corrected timestamp at", index, df.loc[index, 'Timestamp'])
-    #         else:
-    #             # print("missing row at", index, df.loc[index, 'Timestamp'])
-    #             missing_value = round(df.loc[index - 1, 'Timestamp'] + 1 / 60, 5)
-    #             if missing_value < df.loc[index, 'Timestamp']:  # if its greater it means the current value is ok
-    #                 # Create a new row with the missing timestamp and NaN values for other columns
-    #                 new_row = pd.DataFrame([[missing_value] + [np.nan] * (len(df.columns) - 1)],
-    #                                    columns=df.columns)
-    #                 missing_rows += 1
-    #
-    #                 # Insert the new row by concatenating the original DataFrame with the new row
-    #                 df = pd.concat([df.iloc[:index], new_row, df.iloc[index:]]).reset_index(drop=True)
-    #                 # print("new row added at", index, df.loc[index, 'Timestamp'])
-    #
-    #     # index += 1
-    # Calculate the expected timestamp sequence
-    # Check if the values in 'Timestamp' are correct
-    # incorrect_timestamps = df[~df['Timestamp'].apply(lambda x: round(x * 60, 3).is_integer())]
-    #
-    # if not incorrect_timestamps.empty:
-    #     print("There are incorrect timestamp values in the DataFrame:")
-    #     print(incorrect_timestamps['Timestamp'])
-
-    # Calculate the expected timestamp sequence only for correct timestamps
-    incorrect_mask = ~df['Timestamp'].apply(lambda x: round(x * 60, 3).is_integer())
-    df['Expected_Timestamp'] = df['Timestamp'].shift(1) + 1 / 60
-    print('amount of incorrect timestamps: ', incorrect_mask.sum())
-
-    # # Find where the actual timestamp deviates from the expected timestamp for correct timestamps
-    # mask = (correct_mask & df[(df['Timestamp'] - df['Expected_Timestamp']).apply(lambda x: round(x * 60, 4).is_integer())])
-    # print(mask.sum())
-
-    # Create a new DataFrame with corrected timestamps for correct timestamps
-    df.loc[incorrect_mask, 'Timestamp'] = df.loc[incorrect_mask, 'Expected_Timestamp']
+    # fix all the miscalculated timestamps
+    df['Timestamp'] = df['Timestamp'].apply(
+        lambda x: round(int(round(x * 60, 3)) / 60, 5))
 
     # Find missing rows by checking gaps larger than 1/60
-    gap_indices = df.index[df['Timestamp'].diff() > 1 / 60].tolist()
+    gap_indices = df.index[df['Timestamp'].diff() > round(1 / 60, 3)].tolist()
     print('amount of gaps: ', len(gap_indices))
 
     # Prepare new rows to insert
@@ -159,31 +115,25 @@ def extract_blendshape_data(anim_file_path, asset_file_path, output_csv_path):
     missing_rows_count = 0
 
     for index in tqdm(gap_indices):
-        while round(df.loc[index, 'Timestamp'] - df.loc[index - 1, 'Timestamp'], 3) > round(1 / 60, 3) and index < len(df) - 1:
-            missing_value = round(df.loc[index - 1, 'Timestamp'] + 1 / 60, 4)
-            if missing_value < df.loc[index, 'Timestamp']:
-                print(index, missing_value, df.loc[index, 'Timestamp'])
-                new_rows.append([missing_value] + [np.nan] * (len(df.columns) - 1))
-                df.loc[index, 'Timestamp'] = missing_value
-                missing_rows_count += 1  # Increment the missing rows counter
-            else:
-                index += 1
+        missing_value = round(df.loc[index - 1, 'Timestamp'] + 1 / 60, 5)
+        while missing_value < df.loc[index, 'Timestamp'] and index < len(df) - 1:
+            # print(index, missing_value, df.loc[index, 'Timestamp'])
+            new_rows.append([missing_value] + [np.nan] * (len(df.columns) - 1))
+            missing_value = round(missing_value + 1 / 60, 5)
+            missing_rows_count += 1  # Increment the missing rows counter
+        index += 1
 
     # Insert the new rows into the DataFrame
     if new_rows:
         new_rows_df = pd.DataFrame(new_rows, columns=df.columns)
         df = pd.concat([df, new_rows_df]).sort_values('Timestamp').reset_index(drop=True)
 
-    # Drop the temporary column
-    df.drop(columns=['Expected_Timestamp'], inplace=True)
-
     # Print the count of missing rows
     print(f"Number of missing rows added: {missing_rows_count}")
     # print(missing_rows, "missing rows")
-    print("df completed")
-    print(df.shape)
+    print("df completed, shape is:", df.shape)
 
-    # # fill in the possible missing values
+    # fill in the possible missing values
     fill_df(df)
 
     # Drop all "Slope" columns
