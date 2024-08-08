@@ -31,6 +31,7 @@ if __name__ == '__main__':
     connection, client_address = sender_socket.accept()
     print("Connected to:", client_address)
 
+    # just a dummy example to execute some preprocess before sending the data
     try:
         while True:
             print(data.exg_data.shape[0])
