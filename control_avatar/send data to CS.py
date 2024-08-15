@@ -14,7 +14,7 @@ mapping = {
     "CheekPuff": "CheekPuffRight",
 }
 
-
+# Define the desired order of the columns
 blend_shapes = [
     "BrowDownLeft",
     "BrowDownRight",
@@ -75,7 +75,6 @@ blend_shapes = [
     "PupilDilateRight"
 ]
 
-# print(len(desired_columns))
 print(len(blend_shapes))
 
 
@@ -99,25 +98,38 @@ def fill_symetrical(data, mapping, blend_shapes):
     return data
 
 
-# Load the CSV file
-csv_file = r"..\data\participant_01\participant_01_predicted_blendshapes.csv"
-df = pd.read_csv(csv_file, index_col=0)  # Read the CSV file with the first column as index and the first row as headers
+def prepare_data(particiant_number, session_number, model, avaraging_method, start_frame=4000):
+    global mapping, blend_shapes
 
-df = df.iloc[2400:]  # start from the interesting part
+    # Load predicted AUs data
+    # Read the CSV file with the first column as index and the first row as headers
+    au_predicted_data = pd.read_csv(f"../data/participant_{particiant_number}/S{session_number}/"
+                                  f"participant_{particiant_number}_S{session_number}_predicted_blendshapes_{model}.csv", index_col=0)
+    # Start from the desired part
+    au_predicted_data = au_predicted_data.iloc[start_frame:]
 
-data_to_AU = fill_symetrical(df, mapping, blend_shapes)
+    # Load the full video data
+    video_full_data = pd.read_csv(f"../data/participant_{particiant_number}/S{session_number}/"
+                                  f"participant_{particiant_number}_S{session_number}_avatar_blendshapes_{avaraging_method}.csv", index_col=0)
+    # Start from the desired part
+    video_full_data = video_full_data.iloc[start_frame:]
 
+    # Fill the data with the symmetrical values
+    au_predicted_data = fill_symetrical(au_predicted_data, mapping, blend_shapes)
+    video_full_data = fill_symetrical(video_full_data, mapping, blend_shapes)
 
-video_full_data = pd.read_csv(r"..\data\participant_01\participant_01_avatar_blendshapes.csv", index_col=0)
-
-video_full_data = video_full_data.iloc[2400:]  # start from the interesting part
-
-print(video_full_data.columns)
-print(blend_shapes)
-video_full_data = fill_symetrical(video_full_data, mapping, blend_shapes)
+    return au_predicted_data, video_full_data
 
 
 if __name__ == '__main__':
+    # choose the participant number, session number, and model (as strings)
+    participant_number = '02'
+    session_number = '2'
+    model = "LR"  # "LR" for linear regression, "ETR" for extra trees regressor
+    avatar_avaraging_method = "MEAN"
+
+    # Prepare the data
+    predicted_AUs, video_full_data = prepare_data(participant_number, session_number, model, avatar_avaraging_method)
 
     # Set up the first sender socket to send data1 to the first C# script
     sender_socket1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -136,7 +148,7 @@ if __name__ == '__main__':
     connection2, client_address2 = sender_socket2.accept()
     print("Connected to:", client_address2)
     try:
-        for row1, row2 in zip(data_to_AU, video_full_data):
+        for row1, row2 in zip(predicted_AUs, video_full_data):
             data_to_send1 = row1.tobytes()  # Convert data1 to bytes
             data_to_send2 = row2.tobytes()  # Convert data2 to bytes
 
