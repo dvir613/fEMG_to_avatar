@@ -6,11 +6,12 @@ from datetime import datetime, timedelta
 import os
 import sys
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
-folder_name = 'Dar'  # the name of the folder of the participant's data
-participant_number = '01'  # the number of the participant (next times it should be identical to the folder name
+folder_name = 'Hila'  # the name of the folder of the participant's data
+participant_number = '02'  # the number of the participant (next times it should be identical to the folder name
 scene = '001'  # the scene number of the recording
-session = '1'  # the session of the recording
+session = '2'  # the session of the recording
 
 # Get the absolute path of the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,12 +21,12 @@ anim_file_path = fr"{recordings_files_path}\{folder_name}\{folder_name}\SampleHe
 asset_file_path = fr"{recordings_files_path}\{folder_name}\[{scene}] {folder_name} [00{session}].asset"
 output_csv_path = fr'..\data\participant_{participant_number}\S{session}\participant_{participant_number}_S{session}_interpolated_relevant_only_right.csv'
 
-# Check if the file already exists
-if os.path.exists(output_csv_path):
-    print(f"The file {output_csv_path} already exists.")
-    sys.exit()  # Stop the program
-else:
-    print(f"The file {output_csv_path} does not exist. Proceeding with file creation.")
+# # Check if the file already exists
+# if os.path.exists(output_csv_path):
+#     print(f"The file {output_csv_path} already exists.")
+#     sys.exit()  # Stop the program
+# else:
+#     print(f"The file {output_csv_path} does not exist. Proceeding with file creation.")
 
 # relevant blendshapes withouht any of the left side of the face
 relevant_blendshapes = ['BrowDownRight', 'BrowInnerUp', 'BrowOuterUpRight', 'CheekPuff',
@@ -142,6 +143,9 @@ def extract_blendshape_data(anim_file_path, asset_file_path, output_csv_path):
     # Remove the "_Value" suffix from column names
     df = df.rename(columns=lambda x: x.replace('_Value', ''))
 
+    df.to_csv(
+        fr'..\data\participant_{participant_number}\S{session}\participant_{participant_number}_S{session}_relevant_only_right.csv', index=False)
+
     # Replace all NaN values in the first and last rows with 0
     df.iloc[0] = df.iloc[0].fillna(0)
     df.iloc[-1] = df.iloc[-1].fillna(0)
@@ -150,7 +154,8 @@ def extract_blendshape_data(anim_file_path, asset_file_path, output_csv_path):
     df[df < 0] = 0
 
     # Replace NaN values by linear interpolation column by column
-    df = df.interpolate(method='linear', axis=0, limit_direction='both')
+    # df = df.interpolate(method='linear', axis=0, limit_direction='both')
+    df = parallel_interpolation(df)
 
     # Read the asset file content
     with open(asset_file_path, 'r') as file:
@@ -250,6 +255,39 @@ def fill_df(df):
 
     print("started with", empty_values, " empty values")
     print(filled_values, "values filled")
+
+
+def custom_interpolation(series):
+    # Identify the indices of non-NaN values
+    non_nan_indices = series.dropna().index
+
+    for i in range(1, len(non_nan_indices)):
+        prev_idx = non_nan_indices[i - 1]
+        next_idx = non_nan_indices[i]
+        prev_val = series[prev_idx]
+        next_val = series[next_idx]
+
+        # Calculate the factor difference
+        factor_difference = abs(prev_val / (next_val + 1e-9))  # add a small value to avoid division by zero
+
+        if factor_difference > 100 or factor_difference < 0.01:
+            series[prev_idx:next_idx] = series[prev_idx:next_idx].replace(np.nan, 0)
+        else:
+            series[prev_idx:next_idx] = series[prev_idx:next_idx].interpolate(method='linear')
+
+    return series
+
+
+def process_column(col):
+    return custom_interpolation(col)
+
+
+# Parallel processing
+def parallel_interpolation(df):
+    tqdm.pandas(desc="Interpolating DataFrame in Parallel")
+    columns = df.columns
+    processed_cols = Parallel(n_jobs=-1)(delayed(process_column)(df[col]) for col in tqdm(columns, desc="Processing Columns"))
+    return pd.concat(processed_cols, axis=1, keys=columns)
 
 
 # Usage example:
