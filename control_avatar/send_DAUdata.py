@@ -16,17 +16,24 @@ from data_process.prepare_data_for_model import normalize_ica_data
 from CONSTS import *
 from send_data_to_CS import fill_symetrical, mapping, blend_shapes
 
+def preprocess_emg_data(emg_data_chunk):
+    # Hila's preprocess functions should be here
+    return emg_data_chunk
 
 def apply_and_order_ica_to_new_data(X_new, W, electrode_order):
-    # Step 1: Apply the unmixing matrix to obtain the independent components
+    # Step 1: Apply Hila's preprocess functions
+    X_new = preprocess_emg_data(X_new)
+
+    # Step 2: Apply the unmixing matrix to obtain the independent components
     Y_new = np.dot(W, X_new.T)
 
-    # Order the data according to the electrode order
+    # Step 3: Order the data according to the electrode order
     Y_new_ordered = np.zeros_like(Y_new)
     for i, electrode in enumerate(electrode_order):
         if electrode != 16:
             Y_new_ordered[electrode, :] = Y_new[i, :]
 
+    # Step 4: Normalize the data
     Y_normalized = normalize_ica_data(Y_new_ordered)
 
     return Y_normalized
