@@ -41,7 +41,7 @@ def extract_and_order_ica_data(participant_ID, session_folder_path, session_numb
         if file == fr"{participant_ID}_{session_number}_db15_electrode_order.npy":
             electrode_order = np.load(f"{session_folder_path}/{file}")
         continue
-    if ica_before_order and electrode_order:
+    if ica_before_order.any() and electrode_order.any():
         ica_after_order = np.zeros_like(ica_before_order, dtype=float)
         for i in range(16):
             if int(electrode_order[i]) != 16:
