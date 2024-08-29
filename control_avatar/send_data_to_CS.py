@@ -8,72 +8,7 @@ import time
 import numpy as np
 import pandas as pd
 
-
-mapping = {
-    "BrowInnerUp": "BrowInnerUpRight",
-    "CheekPuff": "CheekPuffRight",
-}
-
-# Define the desired order of the columns
-blend_shapes = [
-    "BrowDownLeft",
-    "BrowDownRight",
-    "BrowInnerUpLeft",
-    "BrowInnerUpRight",
-    "BrowOuterUpLeft",
-    "BrowOuterUpRight",
-    "CheekPuffLeft",
-    "CheekPuffRight",
-    "CheekRaiserLeft",
-    "CheekRaiserRight",
-    "CheekSquintLeft",
-    "CheekSquintRight",
-    "EyeBlinkLeft",
-    "EyeBlinkRight",
-    "EyeLookDownLeft",
-    "EyeLookDownRight",
-    "EyeLookInLeft",
-    "EyeLookInRight",
-    "EyeLookOutLeft",
-    "EyeLookOutRight",
-    "EyeLookUpLeft",
-    "EyeLookUpRight",
-    "EyeSquintLeft",
-    "EyeSquintRight",
-    "EyeWideLeft",
-    "EyeWideRight",
-    "JawForward",
-    "JawLeft",
-    "JawOpen",
-    "JawRight",
-    "MouthClose",
-    "MouthDimpleLeft",
-    "MouthDimpleRight",
-    "MouthFrownLeft",
-    "MouthFrownRight",
-    "MouthFunnel",
-    "MouthLeft",
-    "MouthLowerDownLeft",
-    "MouthLowerDownRight",
-    "MouthPressLeft",
-    "MouthPressRight",
-    "MouthPucker",
-    "MouthRight",
-    "MouthRollLower",
-    "MouthRollUpper",
-    "MouthShrugLower",
-    "MouthShrugUpper",
-    "MouthSmileLeft",
-    "MouthSmileRight",
-    "MouthStretchLeft",
-    "MouthStretchRight",
-    "MouthUpperUpLeft",
-    "MouthUpperUpRight",
-    "NoseSneerLeft",
-    "NoseSneerRight",
-    "PupilDilateLeft",
-    "PupilDilateRight"
-]
+from CONSTS import mapping, blend_shapes
 
 print(len(blend_shapes))
 
@@ -98,19 +33,19 @@ def fill_symetrical(data, mapping, blend_shapes):
     return data
 
 
-def prepare_data(particiant_number, session_number, model, avaraging_method, start_frame=4000):
+def prepare_data(participant_number, session_number, model, avaraging_method, start_frame=4000):
     global mapping, blend_shapes
 
     # Load predicted AUs data
     # Read the CSV file with the first column as index and the first row as headers
-    au_predicted_data = pd.read_csv(f"../data/participant_{particiant_number}/S{session_number}/"
-                                  f"participant_{particiant_number}_S{session_number}_predicted_blendshapes_{model}.csv", index_col=0)
+    au_predicted_data = pd.read_csv(f"../data/participant_{participant_number}/S{session_number}/"
+                                  f"participant_{participant_number}_S{session_number}_predicted_blendshapes_{model}.csv", index_col=0)
     # Start from the desired part
     au_predicted_data = au_predicted_data.iloc[start_frame:]
 
     # Load the full video data
-    video_full_data = pd.read_csv(f"../data/participant_{particiant_number}/S{session_number}/"
-                                  f"participant_{particiant_number}_S{session_number}_avatar_blendshapes_{avaraging_method}.csv", index_col=0)
+    video_full_data = pd.read_csv(f"../data/participant_{participant_number}/S{session_number}/"
+                                  f"participant_{participant_number}_S{session_number}_avatar_blendshapes_{avaraging_method}.csv", index_col=0)
     # Start from the desired part
     video_full_data = video_full_data.iloc[start_frame:]
 
