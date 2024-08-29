@@ -8,6 +8,8 @@ import sys
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
+from CONSTS import relevant_blendshapes
+
 folder_name = 'Hila'  # the name of the folder of the participant's data
 participant_number = '02'  # the number of the participant (next times it should be identical to the folder name
 scene = '001'  # the scene number of the recording
@@ -21,20 +23,12 @@ anim_file_path = fr"{recordings_files_path}\{folder_name}\{folder_name}\SampleHe
 asset_file_path = fr"{recordings_files_path}\{folder_name}\[{scene}] {folder_name} [00{session}].asset"
 output_csv_path = fr'..\data\participant_{participant_number}\S{session}\participant_{participant_number}_S{session}_interpolated_relevant_only_right.csv'
 
-# # Check if the file already exists
-# if os.path.exists(output_csv_path):
-#     print(f"The file {output_csv_path} already exists.")
-#     sys.exit()  # Stop the program
-# else:
-#     print(f"The file {output_csv_path} does not exist. Proceeding with file creation.")
-
-# relevant blendshapes withouht any of the left side of the face
-relevant_blendshapes = ['BrowDownRight', 'BrowInnerUp', 'BrowOuterUpRight', 'CheekPuff',
-                        'CheekSquintRight', 'EyeBlinkRight', 'EyeLookDownRight', 'EyeLookInRight', 'EyeLookOutRight',
-                        'EyeLookUpRight', 'EyeSquintRight', 'EyeWideRight', 'JawForward', 'JawOpen', 'JawRight', 'MouthClose',
-                        'MouthDimpleRight', 'MouthFrownRight', 'MouthFunnel', 'MouthLowerDownRight', 'MouthPressRight',
-                        'MouthPucker', 'MouthRight', 'MouthRollLower', 'MouthRollUpper', 'MouthShrugLower', 'MouthShrugUpper',
-                        'MouthSmileRight', 'MouthStretchRight', 'MouthUpperUpRight', 'NoseSneerRight']
+# Check if the file already exists
+if os.path.exists(output_csv_path):
+    print(f"The file {output_csv_path} already exists.")
+    sys.exit()  # Stop the program
+else:
+    print(f"The file {output_csv_path} does not exist. Proceeding with file creation.")
 
 
 # function to extract the blendshapes as a dataframe from the anim file

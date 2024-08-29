@@ -228,7 +228,7 @@ for participant_folder in os.listdir(data_path):
 
         # save participant avatar windows data as csv to compare to predicted data
         avatar_sliding_window_method = "MEAN"
-        full_avatar_data_windows = sliding_window(avatar_data, method=avatar_sliding_window_method, fs=60).T
+        full_avatar_data_windows = sliding_window(avatar_data.to_numpy().T, method=avatar_sliding_window_method, fs=60).T
         print("full avatar windows shape before crop:", full_avatar_data_windows.shape)
         # make it the same size as the predicted values
         full_avatar_data_windows = full_avatar_data_windows[:X_full_RMS.shape[0], :]
