@@ -18,7 +18,6 @@ from send_data_to_CS import fill_symetrical, mapping, blend_shapes
 
 
 def apply_and_order_ica_to_new_data(X_new, W, electrode_order):
-    print("Applying ICA to new data")
     # Step 1: Apply the unmixing matrix to obtain the independent components
     Y_new = np.dot(W, X_new.T)
 
@@ -34,20 +33,17 @@ def apply_and_order_ica_to_new_data(X_new, W, electrode_order):
 
 
 def process_emg_data(emg_data_chunk, W, electrode_order, ml_model):
-    print("running function")
     # Apply ICA transformation to the new data
     Y_data = apply_and_order_ica_to_new_data(emg_data_chunk, W, electrode_order)
 
     # apply RMS averaging
     Y_data = np.sqrt(np.mean(Y_data**2, axis=1))
-    print("Y data:", Y_data)
 
     # Pass through ML model for prediction
     predictions = ml_model.predict(Y_data.reshape(1, -1))
-    print("Predictions:", predictions)
-    predictions = pd.DataFrame(predictions, columns=relevant_blendshapes)
 
     # Fill the symmetrical blendshapes
+    predictions = pd.DataFrame(predictions, columns=relevant_blendshapes)
     full_predictions = fill_symetrical(predictions, mapping, blend_shapes)
 
     return full_predictions
@@ -95,11 +91,8 @@ if __name__ == '__main__':
     # just a dummy example to execute some preprocess before sending the data
     try:
         while True:
-            print(data.exg_data.shape[0])
             if data.exg_data.shape[0] > 2*fs/sending_data_frequency:
-                print("enough data to send")
                 windowed_data = data.exg_data[-int(2*fs/sending_data_frequency):, :16]  # send 2 windows of 0.05 seconds every time
-                # print(windowed_data)
                 data_to_send = process_emg_data(windowed_data, W, electrode_order, ml_model)  # Process the data
                 print("Sending data:", data_to_send.shape)
                 data_to_send = data_to_send.tobytes()  # Convert the data to bytes before sending
