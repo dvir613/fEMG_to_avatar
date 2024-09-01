@@ -14,11 +14,23 @@ import joblib
 
 from data_process.prepare_data_for_model import normalize_ica_data
 from CONSTS import *
-from send_data_to_CS import fill_symetrical, mapping, blend_shapes
+from send_data_to_CS import fill_symetrical
+from data_process.classifying_ica_components import filter_signal, wavelet_denoising, center, whiten
 
-def preprocess_emg_data(emg_data_chunk):
+
+def preprocess_emg_data(emg_data_chunk, fs=500, wavelet='db15'):
     # Hila's preprocess functions should be here
-    return emg_data_chunk
+    # filter the data
+    filtered_emg_data_chunk = filter_signal(emg_data_chunk, fs)
+    # wavelet denoising
+    # TODO: verify with Hila the best parameters maybe need to change the wavelet denoising function for real-time
+    # filtered_emg_data_chunk = wavelet_denoising(filtered_emg_data_chunk, fs, wavelet, window_size=0.1, level=5)
+    # center the data
+    filtered_emg_data_chunk, _ = center(filtered_emg_data_chunk)
+    # whiten the data
+    filtered_emg_data_chunk = whiten(filtered_emg_data_chunk)
+    return filtered_emg_data_chunk
+
 
 def apply_and_order_ica_to_new_data(X_new, W, electrode_order):
     # Step 1: Apply Hila's preprocess functions
@@ -39,7 +51,9 @@ def apply_and_order_ica_to_new_data(X_new, W, electrode_order):
     return Y_normalized
 
 
-def process_emg_data(emg_data_chunk, W, electrode_order, ml_model):
+def process_emg_data(emg_data_chunk, W, electrode_order, ml_model, fs=500):
+    # filter the data
+    emg_data_chunk = preprocess_emg_data(emg_data_chunk, fs)
     # Apply ICA transformation to the new data
     Y_data = apply_and_order_ica_to_new_data(emg_data_chunk, W, electrode_order)
 
@@ -100,7 +114,7 @@ if __name__ == '__main__':
         while True:
             if data.exg_data.shape[0] > 2*fs/sending_data_frequency:
                 windowed_data = data.exg_data[-int(2*fs/sending_data_frequency):, :16]  # send 2 windows of 0.05 seconds every time
-                data_to_send = process_emg_data(windowed_data, W, electrode_order, ml_model)  # Process the data
+                data_to_send = process_emg_data(windowed_data, W, electrode_order, ml_model, fs)  # Process the data
                 print("Sending data:", data_to_send.shape)
                 data_to_send = data_to_send.tobytes()  # Convert the data to bytes before sending
                 connection.sendall(data_to_send)

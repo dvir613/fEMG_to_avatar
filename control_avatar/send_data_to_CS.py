@@ -13,6 +13,7 @@ from CONSTS import mapping, blend_shapes
 print(len(blend_shapes))
 
 
+# function to fill the blendshapes data symmetrically to visualize full face movement
 def fill_symetrical(data, mapping, blend_shapes):
     # Rename columns based on the mapping
     data.rename(columns=mapping, inplace=True)
