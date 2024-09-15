@@ -7,6 +7,8 @@ import socket
 import time
 import numpy as np
 import pandas as pd
+import struct
+import sys
 
 from CONSTS import mapping, blend_shapes
 
@@ -84,15 +86,32 @@ if __name__ == '__main__':
     connection2, client_address2 = sender_socket2.accept()
     print("Connected to:", client_address2)
     try:
-        for row1, row2 in zip(predicted_AUs, video_full_data):
-            data_to_send1 = row1.tobytes()  # Convert data1 to bytes
-            data_to_send2 = row2.tobytes()  # Convert data2 to bytes
+        for i, (row1, row2) in enumerate(zip(predicted_AUs, video_full_data)):
+            data_to_send1 = row1.astype(np.float32).tobytes()
+            data_to_send2 = row2.astype(np.float32).tobytes()
 
+            # Log the data being sent
+            print(f"Sending data {i+1}:")
+            print(f"Data 1 (first 5 values): {row1[:5]}")
+            print(f"Data 2 (first 5 values): {row2[:5]}")
+
+            # Send the length of the data first
+            connection1.sendall(struct.pack('!I', len(data_to_send1)))
             connection1.sendall(data_to_send1)
+            
+            connection2.sendall(struct.pack('!I', len(data_to_send2)))
             connection2.sendall(data_to_send2)
+            
             time.sleep(0.05)  # Wait 0.05 seconds before sending the next row
+
+            if i % 100 == 0:
+                print(f"Sent {i+1} rows of data")
+
+    except Exception as e:
+        print(f"Error occurred: {e}", file=sys.stderr)
     finally:
         connection1.close()
         connection2.close()
         sender_socket1.close()
         sender_socket2.close()
+        print("Connections closed")

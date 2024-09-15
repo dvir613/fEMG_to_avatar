@@ -184,10 +184,11 @@ for participant_folder in os.listdir(data_path):
         for model in models:
 
             model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model}.joblib"
+            # TODO add thr if statement to check if the model already exists
 
-            if os.path.exists(model_path):  # Check if the model already exists
-                print(f"Model {model} already exists. Skipping to the next model...")
-                continue  # Skip the current model and continue with the next one
+            # if os.path.exists(model_path):  # Check if the model already exists
+            #     print(f"Model {model} already exists. Skipping to the next model...")
+            #     continue  # Skip the current model and continue with the next one
 
             # Evaluate models for ICA data
             model_ica, mse_ica, r2_ica, mae_ica, Y_pred_ica = evaluate_models(X_ica_train, X_ica_test, Y_train, Y_test,

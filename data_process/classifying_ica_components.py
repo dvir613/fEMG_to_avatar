@@ -13,6 +13,13 @@ from scipy.interpolate import griddata
 
 
 def filter_signal(data, fs):
+    # Ensure the data is long enough for filtering
+    min_length = 100  # Adjust this value based on your filter requirements
+    if data.shape[1] < min_length:
+        # If data is too short, pad it
+        pad_length = min_length - data.shape[1]
+        data = np.pad(data, ((0, 0), (0, pad_length)), mode='edge')
+
     # apply notch filter to remove 50Hz noise
     b, a = signal.iirnotch(50, 30, fs)
     data = signal.filtfilt(b, a, data, axis=1)
@@ -28,18 +35,19 @@ def filter_signal(data, fs):
     return filtered_signal
 
 
-def wavelet_denoising(emg_data_input, fs, wavelet, window_size=10, level=5):
+def wavelet_denoising(emg_data_input, fs, wavelet, window_size=0.1, level=5):
     emg_data = emg_data_input.copy()
     print("=====================")
     print(f"Denoising signal using {wavelet} Wavelet ...")
+    window_samples = int(window_size * fs)  # Convert window size from seconds to samples
     for source in range(len(emg_data)):
-        for i in range(0, len(emg_data[source]) - window_size * fs, window_size * fs):
-            signal = emg_data[source, i:i + window_size * fs]
-            coefficients = pywt.wavedec(signal, wavelet, level)
+        for i in range(0, len(emg_data[source]) - window_samples, window_samples):
+            signal = emg_data[source, i:i + window_samples]
+            coefficients = pywt.wavedec(signal, wavelet, level=level)
             for j in range(1, len(coefficients)):
                 coefficients[j] = pywt.threshold(coefficients[j], np.std(coefficients[j]))
-            denoised_signal = pywt.waverec(coefficients, wavelet, level)
-            emg_data[source, i:i + window_size * fs] = denoised_signal
+            denoised_signal = pywt.waverec(coefficients, wavelet)
+            emg_data[source, i:i + len(denoised_signal)] = denoised_signal
     return emg_data
 
 

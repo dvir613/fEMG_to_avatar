@@ -13,14 +13,14 @@ public class blendShape_receiver_EMGtoAU : MonoBehaviour
     private const int blendShapesNum = 57;
 
     int matrixSize;
-    double[,] blendShapeWeights;
+    float[] blendShapeWeights; // Change to float
 
     public SkinnedMeshRenderer skinnedMeshRenderer;
 
     void Start()
     {
-        matrixSize = blendShapesNum * sizeof(double); // size of 1x56 matrix of doubles
-//        dataBuffer = new byte[matrixSize];
+        matrixSize = blendShapesNum * sizeof(float); // size of 1x57 matrix of floats
+        dataBuffer = new byte[matrixSize]; // Initialize dataBuffer
         ConnectToServer();
 
         // Get the SkinnedMeshRenderer component
@@ -34,7 +34,6 @@ public class blendShape_receiver_EMGtoAU : MonoBehaviour
         {
             client = new TcpClient("localhost", 65432);
             stream = client.GetStream();
-            dataBuffer = new byte[matrixSize];
             Debug.Log("Connected to server");
         }
         catch (Exception e)
@@ -50,9 +49,8 @@ public class blendShape_receiver_EMGtoAU : MonoBehaviour
             int bytesRead = stream.Read(dataBuffer, 0, dataBuffer.Length);
             if (bytesRead == matrixSize)
             {
-                blendShapeWeights = new double[1, blendShapesNum];
+                blendShapeWeights = new float[blendShapesNum]; // Change to float array
                 Buffer.BlockCopy(dataBuffer, 0, blendShapeWeights, 0, dataBuffer.Length);
-//                Debug.Log("Received matrix:" + blendShapeWeights);
 
                 UpdateBlendShapes();
             }
@@ -60,26 +58,14 @@ public class blendShape_receiver_EMGtoAU : MonoBehaviour
     }
 
     private void UpdateBlendShapes()
+    {
+        for (int j = 0; j < blendShapesNum; j++)
         {
-//             int n = blendShapeWeights.Length;
-            for (int j = 0; j < blendShapesNum; j++)
-            {
-                skinnedMeshRenderer.SetBlendShapeWeight(j, 100*(float)blendShapeWeights[0, j]);
-            }
-
-//            for (int i = 0; i < blendShapeWeights.Length; i++)
-//            {
-//                int blendShapeIndex = indexMapping[i];
-//                if (blendShapeIndex < skinnedMeshRenderer.sharedMesh.blendShapeCount)
-//                {
-//                    skinnedMeshRenderer.SetBlendShapeWeight(blendShapeIndex, 100*blendShapeWeights[i]);
-//                }
-//                else
-//                {
-//                    Debug.LogWarning("Blend shape index " + blendShapeIndex + " is out of range!");
-//                }
-//            }
+            // Clamp the values between 0 and 100
+            float weight = Mathf.Clamp(blendShapeWeights[j] * 100, 0, 100);
+            skinnedMeshRenderer.SetBlendShapeWeight(j, weight);
         }
+    }
 
     void OnApplicationQuit()
     {
