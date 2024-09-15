@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 import joblib
-
+from data_process.classifying_ica_components import filter_signal
 # packages for the model
 from sklearn.model_selection import train_test_split, cross_val_predict, KFold
 from sklearn.linear_model import LinearRegression, Ridge
@@ -26,6 +26,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 project_folder = os.path.abspath(os.path.join(script_dir, '..'))
 
 test_eeg = False
+ICA_flag = False
+EMG_flag = True
 save_results = True
 segments_length = 35  # length of each segment in seconds
 models = ['LR', 'ETR', 'Ridge']
@@ -117,7 +119,7 @@ for participant_folder in os.listdir(data_path):
         # print(ica_after_order.shape)
 
         edf_path = fr"{session_folder_path}\{participant_ID}_{session_number}.edf"
-        if test_eeg:
+        if test_eeg or EMG_flag:
             emg_file = mne.io.read_raw_edf(edf_path, preload=True)
         else:
             emg_file = mne.io.read_raw_edf(edf_path, preload=False)
@@ -125,6 +127,9 @@ for participant_folder in os.listdir(data_path):
         emg_fs = emg_file.info['sfreq']  # sampling frequency of the emg data
 
         X_full = ica_after_order
+        if EMG_flag:
+            X_full = emg_file.get_data()
+        #     filter the data
         # normalize
         X_full = normalize_ica_data(X_full)
         print("X_full shape: ", X_full.shape)
@@ -135,9 +140,15 @@ for participant_folder in os.listdir(data_path):
         annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
                             '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
         events_timings = get_annotations_timings(emg_file, annotations_list)
-
-        participant_ica_windows = prepare_relevant_data(ica_after_order, emg_file, emg_fs, events_timings=events_timings,
-                                                        segments_length=segments_length, norm="ICA", averaging="RMS")
+        if ICA_flag:
+            participant_ica_windows = prepare_relevant_data(ica_after_order, emg_file, emg_fs, events_timings=events_timings,
+                                                            segments_length=segments_length, norm="ICA", averaging="RMS")
+        if EMG_flag:
+            emg_data = emg_file.get_data()
+            # filter emg
+            emg_data = filter_signal(emg_data, emg_fs)
+            participant_ica_windows = prepare_relevant_data(emg_data, emg_file, emg_fs, events_timings=events_timings,
+                                                            segments_length=segments_length, norm="ICA", averaging="RMS")
 
         # add EEG
         if test_eeg:
@@ -184,6 +195,8 @@ for participant_folder in os.listdir(data_path):
         for model in models:
 
             model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model}.joblib"
+            if EMG_flag:
+                model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model}_EMG.joblib"
 
             if os.path.exists(model_path):  # Check if the model already exists
                 print(f"Model {model} already exists. Skipping to the next model...")
@@ -218,8 +231,10 @@ for participant_folder in os.listdir(data_path):
                 # Save the results
                 # predict the whole data
                 Y_pred_full = model_ica.predict(X_full_RMS)
-                pd.DataFrame(Y_pred_full, columns=blendshapes).to_csv(
-                    fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model}.csv")
+                path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model}.csv"
+                if EMG_flag:
+                    path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model}_EMG.csv"
+                pd.DataFrame(Y_pred_full, columns=blendshapes).to_csv(path)
                 print("Predicted data saved as CSV files.")
                 # save the model
                 joblib.dump(model_ica, model_path)

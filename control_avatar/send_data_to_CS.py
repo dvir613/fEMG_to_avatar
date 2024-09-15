@@ -61,7 +61,7 @@ if __name__ == '__main__':
     # choose the participant number, session number, and model (as strings)
     participant_number = '02'
     session_number = '2'
-    model = "LR"  # "LR" for linear regression, "ETR" for extra trees regressor
+    model = "ETR"  # "LR" for linear regression, "ETR" for extra trees regressor
     avatar_avaraging_method = "MEAN"
 
     # Prepare the data
