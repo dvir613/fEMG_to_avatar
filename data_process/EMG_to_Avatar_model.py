@@ -32,9 +32,9 @@ save_results = True
 segments_length = 35  # length of each segment in seconds
 models = ['LR', 'ETR', 'Ridge']
 
-
+performance_results = []
 # Function to evaluate models and print results
-def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cross_val=True, plot_weights=True):
+def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cross_val=True, plot_weights=True, is_ICA=True):
     print(f"\nEvaluating {model_name} for {data_label} data...")
 
     # # Use LazyPredict to evaluate multiple models
@@ -104,6 +104,21 @@ def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cr
         plt.ylabel('blendshapes')
         plt.title(f'Weight Matrix for {data_label} data')
         plt.show()
+    data_name = 'ICA' if is_ICA else 'EMG'
+    performance = {
+        f'{data_name}_Model': model_name,
+        f'{data_name}_Data': data_label,
+        f'{data_name}_MSE': mse,
+        f'{data_name}_R2': r2,
+        f'{data_name}_MAE': mae
+    }
+    if cross_val:
+        performance.update({
+            f'{data_name}_MSE_CV': mse_cv,
+            f'{data_name}_R2_CV': r2_cv,
+            f'{data_name}_MAE_CV': mae_cv
+        })
+    performance_results.append(performance)
 
     return model, mse, r2, mae, Y_pred
 
@@ -115,142 +130,107 @@ for participant_folder in os.listdir(data_path):
     for session_folder in os.listdir(participant_folder_path):
         session_folder_path = fr'{participant_folder_path}\{session_folder}'
         session_number = session_folder
-        ica_after_order = extract_and_order_ica_data(participant_ID, session_folder_path, session_number)
-        # print(ica_after_order.shape)
 
-        edf_path = fr"{session_folder_path}\{participant_ID}_{session_number}.edf"
-        if test_eeg or EMG_flag:
+        # Run for both ICA and EMG configurations
+        for config in ['ICA', 'EMG']:
+            if config == 'ICA':
+                ICA_flag = True
+                EMG_flag = False
+            else:
+                ICA_flag = False
+                EMG_flag = True
+
+            print(f"\nRunning {config} configuration for {participant_ID}, session {session_number}")
+
+            # Load and prepare data (existing code)
+            ica_after_order = extract_and_order_ica_data(participant_ID, session_folder_path, session_number)
+            edf_path = fr"{session_folder_path}\{participant_ID}_{session_number}.edf"
             emg_file = mne.io.read_raw_edf(edf_path, preload=True)
-        else:
-            emg_file = mne.io.read_raw_edf(edf_path, preload=False)
+            emg_fs = emg_file.info['sfreq']
 
-        emg_fs = emg_file.info['sfreq']  # sampling frequency of the emg data
+            if ICA_flag:
+                X_full = ica_after_order
+            elif EMG_flag:
+                X_full = emg_file.get_data()
+                X_full = filter_signal(X_full, emg_fs)
 
-        X_full = ica_after_order
-        if EMG_flag:
-            X_full = emg_file.get_data()
-        #     filter the data
-        # normalize
-        X_full = normalize_ica_data(X_full)
-        print("X_full shape: ", X_full.shape)
+            X_full = normalize_ica_data(X_full)
+            X_full_RMS = sliding_window(X_full, method="RMS", fs=emg_fs).T
 
-        # RMS
-        X_full_RMS = sliding_window(X_full, method="RMS", fs=emg_fs).T
+            # Prepare data for model (existing code)
+            annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
+                                '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
+            events_timings = get_annotations_timings(emg_file, annotations_list)
 
-        annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
-                            '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
-        events_timings = get_annotations_timings(emg_file, annotations_list)
-        if ICA_flag:
-            participant_ica_windows = prepare_relevant_data(ica_after_order, emg_file, emg_fs, events_timings=events_timings,
-                                                            segments_length=segments_length, norm="ICA", averaging="RMS")
-        if EMG_flag:
-            emg_data = emg_file.get_data()
-            # filter emg
-            emg_data = filter_signal(emg_data, emg_fs)
-            participant_ica_windows = prepare_relevant_data(emg_data, emg_file, emg_fs, events_timings=events_timings,
-                                                            segments_length=segments_length, norm="ICA", averaging="RMS")
+            if ICA_flag:
+                participant_ica_windows = prepare_relevant_data(ica_after_order, emg_file, emg_fs,
+                                                                events_timings=events_timings,
+                                                                segments_length=segments_length, norm="ICA",
+                                                                averaging="RMS")
+            elif EMG_flag:
+                participant_ica_windows = prepare_relevant_data(X_full, emg_file, emg_fs, events_timings=events_timings,
+                                                                segments_length=segments_length, norm="ICA",
+                                                                averaging="RMS")
 
-        # add EEG
-        if test_eeg:
-            participant_ica_windows_with_eeg = add_eeg(emg_file, participant_ica_windows, fs=emg_fs, events_timings=events_timings,
-                                                        segments_length=segments_length, norm="ICA", averaging="RMS")
+            # Load avatar data (existing code)
+            avatar_data = pd.read_csv(fr"{session_folder_path}/"
+                                      fr"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv",
+                                      header=0, index_col=0)
+            blendshapes = avatar_data.columns
+            participant_avatar_windows_cut = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
+                                                                          participant_ica_windows,
+                                                                          fs=60, events_timings=events_timings,
+                                                                          segments_length=segments_length, norm=None,
+                                                                          averaging="MEAN")
 
+            # Prepare data for model
+            X = participant_ica_windows.T
+            Y = participant_avatar_windows_cut.T
 
-        # Load the avatar data skip the first row (the features names)
-        avatar_data = pd.read_csv(fr"{session_folder_path}/"
-                                  fr"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv",
-                                  header=0, index_col=0)
+            # Split the data
+            X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
 
-        blendshapes = avatar_data.columns
+            # Run models
+            for model_name in models:
+                model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib"
 
-        participant_avatar_windows_cut = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, participant_ica_windows,
-                                                                      fs=60, events_timings=events_timings,
-                                                                      segments_length=segments_length, norm=None, averaging="MEAN")
-
-
-        # model
-
-        # Transpose to get the shape (samples, features)
-        X_ica = participant_ica_windows.T
-        Y = participant_avatar_windows_cut.T
-
-        # # Impute NaNs in Y data
-        # imputer = SimpleImputer(strategy='constant', fill_value=0)
-        # Y = imputer.fit_transform(Y)
-
-        # Split the data into training and testing sets for both versions of X data
-        X_ica_train, X_ica_test, Y_train, Y_test = train_test_split(X_ica, Y, test_size=0.2, random_state=42)
-        # get indices of X_ica_test in X_ica
-        X_ica_test_indices = np.isin(X_ica, X_ica_test).all(axis=1)
-        # get the indices from the true values
-        X_ica_test_indices = np.where(X_ica_test_indices == True)[0]
-        if test_eeg:
-            X_ica_eeg = participant_ica_windows_with_eeg.T  # Shape: (11679, 18)
-            X_ica_eeg_train, X_ica_eeg_test, Y_train, Y_test = train_test_split(X_ica_eeg, Y, test_size=0.2,
-                                                                            random_state=42)
-
-
-
-        # run the models
-        for model in models:
-
-            model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model}.joblib"
-            if EMG_flag:
-                model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model}_EMG.joblib"
-
-            if os.path.exists(model_path):  # Check if the model already exists
-                print(f"Model {model} already exists. Skipping to the next model...")
-                continue  # Skip the current model and continue with the next one
-
-            # Evaluate models for ICA data
-            model_ica, mse_ica, r2_ica, mae_ica, Y_pred_ica = evaluate_models(X_ica_train, X_ica_test, Y_train, Y_test,
-                                                                              model, f'{participant_ID} {session_number} ICA')
-
-            # Evaluate models for ICA + EEG data
-            if test_eeg:
-                model_ica_eeg, mse_ica_eeg, r2_ica_eeg, mae_ica_eeg, Y_pred_ica_eeg = evaluate_models(X_ica_eeg_train, X_ica_eeg_test, Y_train,
-                                                                                   Y_test, model, f'{participant_ID} {session_number} ICA + EEG')
-
-                # Compare evaluation metrics
-                print("\nComparison of Evaluation Metrics:")
-                print(f"MSE Improvement: {mse_ica - mse_ica_eeg}")
-                print(f"R2 Improvement: {r2_ica_eeg - r2_ica}")
-                print(f"MAE Improvement: {mae_ica - mae_ica_eeg}")
-
-                # Perform statistical significance test (paired t-test) on the predictions
-                t_stat, p_value = ttest_rel(Y_pred_ica.flatten(), Y_pred_ica_eeg.flatten())
-                print(f"\nPaired t-test Results:")
-                print(f"T-statistic: {t_stat}")
-                print(f"P-value: {p_value}")
-                if p_value < 0.05:
-                    print("The improvement is statistically significant.")
-                else:
-                    print("The improvement is not statistically significant.")
-
-            if save_results:
-                # Save the results
-                # predict the whole data
-                Y_pred_full = model_ica.predict(X_full_RMS)
-                path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model}.csv"
                 if EMG_flag:
-                    path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model}_EMG.csv"
-                pd.DataFrame(Y_pred_full, columns=blendshapes).to_csv(path)
-                print("Predicted data saved as CSV files.")
-                # save the model
-                joblib.dump(model_ica, model_path)
-                print(f"Model {model} saved as joblib file.")
+                    model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
+                                                                  model_name, f'{participant_ID} {session_number} {config}',
+                                                                  is_ICA=False)
+                else:
+                    model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
+                                                                  model_name, f'{participant_ID} {session_number} {config}',
+                                                                  is_ICA=True)
 
+                if save_results:
+                    # Save predictions
+                    Y_pred_full = model.predict(X_full_RMS)
+                    pred_path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv"
+                    pd.DataFrame(Y_pred_full, columns=blendshapes).to_csv(pred_path)
+                    print(f"Predicted data saved as {pred_path}")
 
-        # save participant avatar windows data as csv to compare to predicted data
+                    # Save model
+                    joblib.dump(model, model_path)
+                    print(f"Model {model_name} for {config} saved as {model_path}")
+
+        # After running both configurations, save performance results
+        performance_df = pd.DataFrame(performance_results)
+        performance_csv_path = fr"{session_folder_path}/{participant_ID}_{session_number}_model_performance_comparison.csv"
+        performance_df.to_csv(performance_csv_path, index=False)
+        print(f"Model performance comparison results saved to {performance_csv_path}")
+
+        # Reset performance_results for the next session
+        performance_results = []
+
+        # Save avatar data (existing code)
         avatar_sliding_window_method = "MEAN"
-        full_avatar_data_windows = sliding_window(avatar_data.to_numpy().T, method=avatar_sliding_window_method, fs=60).T
-        print("full avatar windows shape before crop:", full_avatar_data_windows.shape)
-        # make it the same size as the predicted values
+        full_avatar_data_windows = sliding_window(avatar_data.to_numpy().T, method=avatar_sliding_window_method,
+                                                  fs=60).T
         full_avatar_data_windows = full_avatar_data_windows[:X_full_RMS.shape[0], :]
         pd.DataFrame(full_avatar_data_windows, columns=blendshapes).to_csv(
             fr"{session_folder_path}\{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv")
         print("Avatar data saved as CSV file.\n")
-
 
 
 
