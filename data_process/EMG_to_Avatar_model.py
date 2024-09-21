@@ -52,6 +52,8 @@ def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cr
     if cross_val:
         # Cross-validation setup
         kf = KFold(n_splits=5, shuffle=True, random_state=42)
+        if np.isnan(Y_train).any():
+            print("Warning: NaN values found in the target variable. Imputing with most frequent value.")
         Y_pred_cv = cross_val_predict(model, X_train, Y_train, cv=kf)
 
         mse_cv = mean_squared_error(Y_train, Y_pred_cv)
@@ -161,35 +163,37 @@ for participant_folder in os.listdir(data_path):
             annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
                                 '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
             events_timings = get_annotations_timings(emg_file, annotations_list)
+            trials_lst = [[2,8,16], [3,8,17], [4,10,18], [2,8,14], [2,9,17], [2,6,13], [2,8,14], [2,9,17], [2,6,11], [2,9,15]]
+            trials_lst_timing = [[] for i in range(len(trials_lst))]
+            for i in range(len(trials_lst)):
+                for j in range(len(trials_lst[0])):
+                    trials_lst_timing[i].append(round(events_timings[i] + trials_lst[i][j]))
 
             if ICA_flag:
-                participant_ica_windows = prepare_relevant_data(ica_after_order, emg_file, emg_fs,
-                                                                events_timings=events_timings,
-                                                                segments_length=segments_length, norm="ICA",
-                                                                averaging="RMS")
+                relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(ica_after_order, emg_file, emg_fs, trials_lst_timing,
+                                                                                        events_timings=events_timings,
+                                                                                        segments_length=4, norm="ICA",
+                                                                                        averaging="RMS")
             elif EMG_flag:
-                participant_ica_windows = prepare_relevant_data(X_full, emg_file, emg_fs, events_timings=events_timings,
-                                                                segments_length=segments_length, norm="ICA",
-                                                                averaging="RMS")
-
+                relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(X_full, emg_file, emg_fs, trials_lst_timing,
+                                                                                        events_timings=events_timings,
+                                                                                        segments_length=4, norm="ICA",
+                                                                                        averaging="RMS")
             # Load avatar data (existing code)
             avatar_data = pd.read_csv(fr"{session_folder_path}/"
                                       fr"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv",
                                       header=0, index_col=0)
             blendshapes = avatar_data.columns
-            participant_avatar_windows_cut = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
-                                                                          participant_ica_windows,
-                                                                          fs=60, events_timings=events_timings,
-                                                                          segments_length=segments_length, norm=None,
-                                                                          averaging="MEAN")
-
-            # Prepare data for model
-            X = participant_ica_windows.T
-            Y = participant_avatar_windows_cut.T
-
-            # Split the data
-            X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
-
+            relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
+                                                                                         relevant_data_train_emg, relevant_data_test_emg,
+                                                                                         trials_lst_timing,
+                                                                                         fs=60, events_timings=events_timings,
+                                                                                         segments_length=segments_length, norm=None,
+                                                                                         averaging="Max")
+            X_train = relevant_data_train_emg.T
+            X_test = relevant_data_test_emg.T
+            Y_train = relevant_data_train_avatar.T
+            Y_test = relevant_data_test_avatar.T
             # Run models
             for model_name in models:
                 model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib"
@@ -225,9 +229,8 @@ for participant_folder in os.listdir(data_path):
 
         # Save avatar data (existing code)
         avatar_sliding_window_method = "MEAN"
-        full_avatar_data_windows = sliding_window(avatar_data.to_numpy().T, method=avatar_sliding_window_method,
+        full_avatar_data_windows = sliding_window(Y_test.T, method=avatar_sliding_window_method,
                                                   fs=60).T
-        full_avatar_data_windows = full_avatar_data_windows[:X_full_RMS.shape[0], :]
         pd.DataFrame(full_avatar_data_windows, columns=blendshapes).to_csv(
             fr"{session_folder_path}\{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv")
         print("Avatar data saved as CSV file.\n")

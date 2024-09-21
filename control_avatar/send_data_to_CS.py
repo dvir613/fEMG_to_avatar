@@ -40,13 +40,13 @@ def prepare_data(participant_number, session_number, model, avaraging_method, st
     # Load predicted AUs data
     # Read the CSV file with the first column as index and the first row as headers
     au_predicted_data = pd.read_csv(f"../data/participant_{participant_number}/S{session_number}/"
-                                  f"participant_{participant_number}_S{session_number}_predicted_blendshapes_{model}_EMG.csv", index_col=0)
+                                  f"participant_{participant_number}_S{session_number}_predicted_blendshapes_{model}.csv", index_col=0)
     # Start from the desired part
     au_predicted_data = au_predicted_data.iloc[start_frame:]
 
     # Load the full video data
     video_full_data = pd.read_csv(f"../data/participant_{participant_number}/S{session_number}/"
-                                  f"participant_{participant_number}_S{session_number}_avatar_blendshapes_{avaraging_method}_test_set.csv", index_col=0)
+                                  f"participant_{participant_number}_S{session_number}_avatar_blendshapes_{avaraging_method}.csv", index_col=0)
     # Start from the desired part
     video_full_data = video_full_data.iloc[start_frame:]
 
@@ -61,7 +61,7 @@ if __name__ == '__main__':
     # choose the participant number, session number, and model (as strings)
     participant_number = '02'
     session_number = '2'
-    model = "LR"  # "LR" for linear regression, "ETR" for extra trees regressor
+    model = "ETR"  # "LR" for linear regression, "ETR" for extra trees regressor
     avatar_avaraging_method = "MEAN"
 
     # Prepare the data

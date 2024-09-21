@@ -29,6 +29,11 @@ def sliding_window(data, method, fs, window_length=0.1, step_length=0.05):
         for i in range(data.shape[0]):
             for j in range(num_windows):
                 result[i, j] = np.mean(data[i, j * step_size:j * step_size + window_size])
+    if method == "Max":
+        for i in range(data.shape[0]):
+            for j in range(num_windows):
+                result[i, j] = np.max(data[i, j * step_size:j * step_size + window_size])
+
     return result
 
 
@@ -71,41 +76,48 @@ def get_annotations_timings(emg_file, annotations_list=None):
     return events_timings
 
 
-def prepare_relevant_data(data, emg_file, fs, events_timings=None, segments_length=35, norm=None, averaging="RMS"):
+def prepare_relevant_data(data, emg_file, fs, trials_lst_timing, events_timings=None, segments_length=35, norm=None, averaging="RMS"):
+    fs = int(fs)
     if events_timings is None:
         events_timings = get_annotations_timings(emg_file)
-    # splice the data to contain only the events segments
-    relevant_data = np.concatenate(
-        [data[:, int((timing - 5) * fs):int((timing + segments_length - 5) * fs)] for timing in
-         events_timings], axis=1)
+    # split to train and test: first 2 repetitions are for training, the third is for testing
+    relevant_data_train = []
+    relevant_data_test = []
+    for i in range(len(trials_lst_timing)):
+        relevant_data_train.append(data[:,trials_lst_timing[i][0] * fs:trials_lst_timing[i][0] * fs + segments_length * fs])
+        relevant_data_train.append(data[:,trials_lst_timing[i][1] * fs:trials_lst_timing[i][1] * fs + segments_length * fs])
+        relevant_data_test.append(data[:,trials_lst_timing[i][2] * fs:trials_lst_timing[i][2] * fs + segments_length * fs])
+    relevant_data_train = np.concatenate(relevant_data_train, axis=1)
+    relevant_data_test = np.concatenate(relevant_data_test, axis=1)
     if norm == "ICA":
-        relevant_data = normalize_ica_data(relevant_data)
-    print("relevant data shape: ", relevant_data.shape)
+        relevant_data_train = normalize_ica_data(relevant_data_train)
+        relevant_data_test = normalize_ica_data(relevant_data_test)
     # sliding window averaging
-    relevant_data_averaged = sliding_window(relevant_data, method=averaging, fs=fs)
+    relevant_data_train = sliding_window(relevant_data_train, method=averaging, fs=fs)
+    relevant_data_test = sliding_window(relevant_data_test, method=averaging, fs=fs)
+    return relevant_data_train, relevant_data_test
 
-    return relevant_data_averaged
 
-
-def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, emg_relevant_data_averaged, fs=60, events_timings=None, segments_length=35, norm=None, averaging="MEAN"):
+def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant_data_train_emg, relevant_data_test_emg, trials_lst_timing, fs=60, events_timings=None, segments_length=35, norm=None, averaging="MEAN"):
     time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
     avatar_data = avatar_data.to_numpy().T
+    fs_emg = emg_file.info['sfreq']
     print("original avatar data shape: ", avatar_data.shape)
     avatar_fps = fs  # data collection was in 60 fps
     frames_to_cut = int(time_delta * avatar_fps)
     avatar_data = avatar_data[:, frames_to_cut:]
     print("avatar data cut shape: ", avatar_data.shape)
 
-    avatar_relevant_data_averaged =  prepare_relevant_data(avatar_data, emg_file=emg_file, fs=fs, events_timings=events_timings,
+    relevant_data_train_avatar, relevant_data_test_avatar =  prepare_relevant_data(avatar_data, emg_file, fs, trials_lst_timing, events_timings=events_timings,
                                                            segments_length=segments_length, norm=norm, averaging=averaging)
-    print("avatar windows shape before crop:", avatar_relevant_data_averaged.shape)
 
     # Cut avatar windows to match the number of ICA windows
-    avatar_relevant_data_averaged_cut = avatar_relevant_data_averaged[:, :emg_relevant_data_averaged.shape[1]]
+    relevant_data_train_avatar = relevant_data_train_avatar[:, :relevant_data_train_emg.shape[1]]
+    relevant_data_test_avatar = relevant_data_test_avatar[:, :relevant_data_test_emg.shape[1]]
 
-    print("ica windows shape:", emg_relevant_data_averaged.shape, "avatar windows shape:",
-          avatar_relevant_data_averaged_cut.shape)
-    return avatar_relevant_data_averaged_cut
+    # print("ica windows shape:", emg_relevant_data_averaged.shape, "avatar windows shape:",
+    #       avatar_relevant_data_averaged_cut.shape)
+    return relevant_data_train_avatar, relevant_data_test_avatar
 
 
 def get_time_delta(emg_file, avatar_file, participant_ID):
