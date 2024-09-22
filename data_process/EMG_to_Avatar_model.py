@@ -188,8 +188,8 @@ for participant_folder in os.listdir(data_path):
                                                                                          relevant_data_train_emg, relevant_data_test_emg,
                                                                                          trials_lst_timing,
                                                                                          fs=60, events_timings=events_timings,
-                                                                                         segments_length=segments_length, norm=None,
-                                                                                         averaging="Max")
+                                                                                         segments_length=4, norm=None,
+                                                                                         averaging="MEAN")
             X_train = relevant_data_train_emg.T
             X_test = relevant_data_test_emg.T
             Y_train = relevant_data_train_avatar.T
