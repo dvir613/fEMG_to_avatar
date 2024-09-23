@@ -61,11 +61,11 @@ def prepare_data(participant_number, session_number, model, avaraging_method, st
 
 if __name__ == '__main__':
     # choose the participant number, session number, and model (as strings)
-    participant_number = '01'
-    session_number = '1'
+    participant_number = '02'
+    session_number = '2'
     # LinearTransform_ICA
     # Autoencoder_ICA
-    model = "Autoencoder_ICA"  # "LR" for linear regression, "ETR" for extra trees regressor
+    model = "LinearTransform_ICA"  # "LR" for linear regression, "ETR" for extra trees regressor
     avatar_avaraging_method = "MEAN"
 
     # Prepare the data

@@ -61,6 +61,28 @@ class LinearTransformNet(nn.Module):
         return self.linear(x)
 
 
+class EnhancedTransformNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim=64):
+        super(EnhancedTransformNet, self).__init__()
+        self.layer1 = nn.Linear(input_dim, hidden_dim)
+        self.activation = nn.ReLU()
+        self.layer2 = nn.Linear(hidden_dim, hidden_dim)
+        self.output_layer = nn.Linear(hidden_dim, output_dim)
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+
+    def forward(self, x):
+        x = self.activation(self.layer1(x))
+        x = self.activation(self.layer2(x))
+        return self.output_layer(x)
+
 
 def train_model(model, X_train, Y_train, X_test, Y_test, epochs=100, lr=0.01):
     criterion = nn.MSELoss()
@@ -444,15 +466,16 @@ def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
     parser.add_argument("--data_path", default=f"C:/Users/YH006_new/fEMG_to_avatar/data", help="Path to data directory")
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
-    parser.add_argument("--ica_flag", action="store_true", default=False, help="Use ICA flag")
-    parser.add_argument("--emg_flag", action="store_true", default=True, help="Use EMG flag")
+    parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
+    parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
     parser.add_argument("--build_individual_models", action="store_true", default=True, help="Build individual models flag")
     parser.add_argument("--train_deep_learning_model", action="store_true", default=True, help="Train deep learning model flag")
     parser.add_argument("--tune_autoencoder", action="store_true", default=False, help="Tune autoencoder flag")
-    parser.add_argument("--train_linear_transform", action="store_true", default=False, help="Train linear transform flag")
-    parser.add_argument("--train_autoencoder", action="store_true", default=True, help="Train autoencoder flag")
-    parser.add_argument("--criterion", default='mse', choices=['mse', 'pearson'], help="Loss criterion")
+    parser.add_argument("--train_linear_transform", action="store_true", default=True, help="Train linear transform flag")
+    parser.add_argument("--train_enhanced_linear_transform", action="store_true", default=True, help="Train enhanced linear transform flag")
+    parser.add_argument("--train_autoencoder", action="store_true", default=False, help="Train autoencoder flag")
+    parser.add_argument("--criterion", default='pearson', choices=['mse', 'pearson'], help="Loss criterion")
     parser.add_argument("--segments_length", type=int, default=4, help="Length of segments in seconds")
     parser.add_argument("--models", nargs='+', default=['LR', 'ETR', 'Ridge', 'Lasso', 'ElasticNet', 'DecisionTreeRegressor', 'RandomForestRegressor'], help="Models to evaluate")
 
@@ -475,14 +498,7 @@ def main():
                 session_number = session_folder
 
                 # Run for both ICA and EMG configurations
-                for config in ['ICA', 'EMG']:
-                    if config == 'ICA':
-                        args.ica_flag = True
-                        args.emg_flag = False
-                    else:
-                        args.ica_flag = False
-                        args.emg_flag = True
-
+                for config in ['ICA']:
                     print(f"\nRunning {config} configuration for {participant_ID}, session {session_number}")
 
                     # Load and prepare data (existing code)
@@ -556,13 +572,17 @@ def main():
                         output_dim = Y_train.shape[1]
 
                         if args.train_linear_transform:
-                            print("Training Linear Transform Model...")
-                            model = LinearTransformNet(input_dim, output_dim).to(device)
+                            if args.train_enhanced_linear_transform:
+                                print("Training Enhanced Linear Transform Model...")
+                                model = EnhancedTransformNet(input_dim, output_dim).to(device)
+                            else:
+                                print("Training Linear Transform Model...")
+                                model = LinearTransformNet(input_dim, output_dim).to(device)
                             # Train the model
                             train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test, epochs=30, lr=0.01)
 
                             # Get the transformation matrix
-                            transformation_matrix = model.linear.weight.detach().cpu().numpy()
+                            # transformation_matrix = model.linear.weight.detach().cpu().numpy()
                             # Make predictions
                             model.eval()
                             with torch.no_grad():
