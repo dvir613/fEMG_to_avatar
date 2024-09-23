@@ -9,7 +9,6 @@ matplotlib
 pandas
 pywavelets
 scikit-learn
-lazypredict
 seaborn
 keyboard
 pyedflib

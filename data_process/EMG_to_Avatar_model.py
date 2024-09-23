@@ -6,7 +6,9 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 import joblib
 from data_process.classifying_ica_components import filter_signal
-# packages for the model
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split, cross_val_predict, KFold
@@ -15,11 +17,14 @@ from sklearn.metrics import mean_squared_error,  r2_score, mean_absolute_error
 from sklearn.impute import SimpleImputer
 from sklearn.svm import SVR
 from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.preprocessing import StandardScaler
 
 from scipy.stats import ttest_rel
 import seaborn as sns
 
 from prepare_data_for_model import *
+
+
 
 
 # Get the absolute path of the current script
@@ -32,8 +37,188 @@ ICA_flag = False
 EMG_flag = True
 save_results = True
 build_individual_models = True
+train_deep_learning_model = True
 segments_length = 4  # length of each segment in seconds
 models = ['LR', 'ETR', 'Ridge', 'Lasso', 'ElasticNet', 'DecisionTreeRegressor', 'RandomForestRegressor']
+
+# Define a neural network model for the linear transformation
+class LinearTransformNet(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(LinearTransformNet, self).__init__()
+        self.linear = nn.Linear(input_dim, output_dim, bias=False)
+
+    def forward(self, x):
+        return self.linear(x)
+
+
+def train_model(model, X_train, Y_train, X_test, Y_test, epochs=1000, lr=0.01):
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    train_losses = []
+    test_losses = []
+
+    for epoch in range(epochs):
+        # Training
+        model.train()
+        optimizer.zero_grad()
+        outputs = model(X_train)
+        loss = criterion(outputs, Y_train)
+        loss.backward()
+        optimizer.step()
+        train_losses.append(loss.item())
+
+        # Evaluation
+        model.eval()
+        with torch.no_grad():
+            test_outputs = model(X_test)
+            test_loss = criterion(test_outputs, Y_test)
+            test_losses.append(test_loss.item())
+
+        if (epoch + 1) % 100 == 0:
+            print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {loss.item():.4f}, Test Loss: {test_loss.item():.4f}')
+
+    return train_losses, test_losses
+
+
+class SimpleAutoencoder(nn.Module):
+    def __init__(self, input_dim, encoding_dim):
+        super(SimpleAutoencoder, self).__init__()
+
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, encoding_dim),
+            nn.ReLU()
+        )
+
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(encoding_dim, input_dim),
+            nn.Sigmoid()  # or nn.Tanh(), depending on your data range
+        )
+
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded
+
+    def encode(self, x):
+        return self.encoder(x)
+
+    def decode(self, x):
+        return self.decoder(x)
+
+
+# Function to train the autoencoder
+# def train_autoencoder(model, X_train, X_test, epochs=100, lr=0.001, batch_size=32):
+#     criterion = nn.MSELoss()
+#     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+#
+#     train_loader = torch.utils.data.DataLoader(X_train, batch_size=batch_size, shuffle=True)
+#
+#     train_losses = []
+#     test_losses = []
+#
+#     for epoch in range(epochs):
+#         model.train()
+#         train_loss = 0
+#         for batch in train_loader:
+#             optimizer.zero_grad()
+#             outputs = model(batch)
+#             loss = criterion(outputs, batch)
+#             loss.backward()
+#             optimizer.step()
+#             train_loss += loss.item()
+#
+#         train_loss /= len(train_loader)
+#         train_losses.append(train_loss)
+#
+#         model.eval()
+#         with torch.no_grad():
+#             test_outputs = model(X_test)
+#             test_loss = criterion(test_outputs, X_test)
+#             test_losses.append(test_loss.item())
+#
+#         if (epoch + 1) % 10 == 0:
+#             print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss.item():.4f}')
+#
+#     return train_losses, test_losses
+
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.model_selection import KFold
+import numpy as np
+
+
+def pearson_correlation_loss(y_pred, y_true):
+    vx = y_pred - torch.mean(y_pred)
+    vy = y_true - torch.mean(y_true)
+    cost = torch.sum(vx * vy) / (torch.sqrt(torch.sum(vx ** 2)) * torch.sqrt(torch.sum(vy ** 2)))
+    return 1 - cost
+
+
+def train_autoencoder(model, X, epochs=100, lr=0.001, batch_size=32, n_splits=5):
+    kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+    best_model = None
+    best_loss = float('inf')
+
+    fig, axs = plt.subplots(n_splits, 1, figsize=(10, 5 * n_splits), squeeze=False)
+
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(X)):
+        print(f"Fold {fold + 1}")
+
+        X_train, X_val = X[train_idx], X[val_idx]
+
+        train_dataset = TensorDataset(X_train)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+        criterion = pearson_correlation_loss
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+        train_losses = []
+        val_losses = []
+
+        for epoch in range(epochs):
+            model.train()
+            train_loss = 0
+            for batch in train_loader:
+                optimizer.zero_grad()
+                inputs = batch[0]
+                outputs = model(inputs)
+                loss = criterion(outputs, inputs)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+
+            train_loss /= len(train_loader)
+            train_losses.append(train_loss)
+
+            model.eval()
+            with torch.no_grad():
+                val_outputs = model(X_val)
+                val_loss = criterion(val_outputs, X_val)
+                val_losses.append(val_loss.item())
+
+            if (epoch + 1) % 10 == 0:
+                print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_loss:.4f}, Val Loss: {val_loss.item():.4f}')
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            best_model = model.state_dict()
+
+        # Plot losses for this fold
+        axs[fold, 0].plot(train_losses, label='Train Loss')
+        axs[fold, 0].plot(val_losses, label='Validation Loss')
+        axs[fold, 0].set_title(f'Fold {fold + 1}')
+        axs[fold, 0].set_xlabel('Epoch')
+        axs[fold, 0].set_ylabel('Loss')
+        axs[fold, 0].legend()
+
+    plt.tight_layout()
+    plt.show()
+
+    model.load_state_dict(best_model)
+    return model
 
 performance_results = []
 # Function to evaluate models and print results
@@ -214,37 +399,127 @@ if build_individual_models:
                 X_test = relevant_data_test_emg.T
                 Y_train = relevant_data_train_avatar.T
                 Y_test = relevant_data_test_avatar.T
-                # Run models
-                for model_name in models:
-                    model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib"
 
-                    if EMG_flag:
-                        model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
-                                                                      model_name, f'{participant_ID} {session_number} {config}',
-                                                                      is_ICA=False)
-                    else:
-                        model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
-                                                                      model_name, f'{participant_ID} {session_number} {config}',
-                                                                      is_ICA=True)
+                # Standardize the features
+                scaler_X = StandardScaler()
+                scaler_Y = StandardScaler()
 
+                X_train = scaler_X.fit_transform(X_train)
+                X_test = scaler_X.transform(X_test)
+                Y_train = scaler_Y.fit_transform(Y_train)
+                Y_test = scaler_Y.transform(Y_test)
+
+                if train_deep_learning_model:
+
+                    # Convert to PyTorch tensors
+                    X_train = torch.FloatTensor(X_train)
+                    X_test = torch.FloatTensor(X_test)
+                    Y_train = torch.FloatTensor(Y_train)
+                    Y_test = torch.FloatTensor(Y_test)
+
+                    # Initialize the model
+                    input_dim = X_train.shape[1]
+                    output_dim = Y_train.shape[1]
+                    model = LinearTransformNet(input_dim, output_dim)
+
+                    # Train the model
+                    train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test, epochs=30, lr=0.01)
+
+                    # # Plot loss curves
+                    # plt.figure(figsize=(10, 5))
+                    # plt.plot(train_losses, label='Train Loss')
+                    # plt.plot(test_losses, label='Test Loss')
+                    # plt.xlabel('Epoch')
+                    # plt.ylabel('Loss')
+                    # plt.legend()
+                    # plt.title(f'Training and Test Loss for Linear Transform Model, {config}')
+                    # plt.show()
+
+                    # Get the transformation matrix
+                    transformation_matrix = model.linear.weight.detach().numpy()
+
+                    # Make predictions
+                    model.eval()
+                    with torch.no_grad():
+                        Y_pred = model(X_test)
+
+                    # Inverse transform predictions
                     if save_results:
+                        model_name = 'LinearTransform'
+                        # perform the inverse transformation to get the original values
+                        Y_pred = scaler_Y.inverse_transform(Y_pred)
                         pred_path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv"
                         pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
                         print(f"Predicted data saved as {pred_path}")
-
+                        model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib"
                         # Save model
                         joblib.dump(model, model_path)
                         print(f"Model {model_name} for {config} saved as {model_path}")
 
-            # After running both configurations, save performance results
-            performance_df = pd.DataFrame(performance_results)
-            performance_csv_path = fr"{session_folder_path}/{participant_ID}_{session_number}_model_performance_comparison.csv"
-            performance_df.to_csv(performance_csv_path, index=False)
-            print(f"Model performance comparison results saved to {performance_csv_path}")
+                    encoding_dim = output_dim  # You can adjust this
 
-            # Reset performance_results for the next session
-            performance_results = []
+                    autoencoder = SimpleAutoencoder(input_dim, encoding_dim)
 
+                    autoencoder = train_autoencoder(autoencoder, X_train)
+
+                    # After training, you can use the encoder to get the encoded representation
+                    encoded_data = autoencoder.encode(X_test)
+
+                    # And use the full autoencoder to reconstruct the data
+                    reconstructed_data = autoencoder(X_test)
+
+                    # make predictions
+                    model.eval()
+                    with torch.no_grad():
+                        Y_pred = model(X_test)
+
+                    # Save the autoencoder model
+                    if save_results:
+                        model_name = 'Autoencoder'
+                        # perform the inverse transformation to get the original values
+                        Y_pred = scaler_Y.inverse_transform(Y_pred)
+                        pred_path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv"
+                        pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
+                        model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib"
+                        joblib.dump(autoencoder, model_path)
+                        print(f"Model {model_name} for {config} saved as {model_path}")
+
+                else:
+                    # Run models
+                    for model_name in models:
+                        model_path = fr"{session_folder_path}/{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib"
+
+                        if EMG_flag:
+                            model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
+                                                                          model_name, f'{participant_ID} {session_number} {config}',
+                                                                          is_ICA=False)
+                        else:
+                            model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
+                                                                          model_name, f'{participant_ID} {session_number} {config}',
+                                                                          is_ICA=True)
+
+                        if save_results:
+                            # perform the inverse transformation to get the original values
+                            Y_pred = scaler_Y.inverse_transform(Y_pred)
+                            pred_path = fr"{session_folder_path}/{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv"
+                            pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
+                            print(f"Predicted data saved as {pred_path}")
+
+                            # Save model
+                            joblib.dump(model, model_path)
+                            print(f"Model {model_name} for {config} saved as {model_path}")
+
+                    # After running both configurations, save performance results
+                    performance_df = pd.DataFrame(performance_results)
+                    performance_csv_path = fr"{session_folder_path}/{participant_ID}_{session_number}_model_performance_comparison.csv"
+                    performance_df.to_csv(performance_csv_path, index=False)
+                    print(f"Model performance comparison results saved to {performance_csv_path}")
+
+                    # Reset performance_results for the next session
+                    performance_results = []
+
+            # convert the test values to the original scale
+            Y_test = relevant_data_test_avatar.T
             # Save avatar data (existing code)
             avatar_sliding_window_method = "MEAN"
             pd.DataFrame(Y_test, columns=blendshapes).to_csv(
@@ -356,6 +631,7 @@ else:
     performance_csv_path = fr"{project_folder}\results\combined_model_performance_comparison.csv"
     performance_df.to_csv(performance_csv_path, index=False)
     print(f"Combined model performance comparison results saved to {performance_csv_path}")
+
 
     # Save combined test data
     pd.DataFrame(Y_test, columns=blendshapes).to_csv(
