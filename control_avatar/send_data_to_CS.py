@@ -38,7 +38,7 @@ def prepare_data(participant_number, session_number, model, avaraging_method, st
     # Load predicted AUs data
     # Read the CSV file with the first column as index and the first row as headers
     au_predicted_data = pd.read_csv(f"../data/participant_{participant_number}/S{session_number}/"
-                                    f"participant_{participant_number}_S{session_number}_predicted_blendshapes_{model}.csv",
+                                    f"participant_{participant_number}_S{session_number}_predicted_blendshapes_{model}_ICA.csv",
                                     index_col=0)
     # Start from the desired part
     # au_predicted_data = au_predicted_data.iloc[start_frame:]
@@ -65,8 +65,8 @@ if __name__ == '__main__':
     session_number = '2'
     # LinearTransform_ICA
     # Autoencoder_ICA
-    model = "LinearTransform_ICA"  # "LR" for linear regression, "ETR" for extra trees regressor
-    avatar_avaraging_method = "MEAN"
+    model = "LinearTransform"  # "LR" for linear regression, "ETR" for extra trees regressor
+    avatar_avaraging_method = "RMS"
 
     # Prepare the data
     predicted_AUs, video_full_data = prepare_data(participant_number, session_number, model, avatar_avaraging_method)

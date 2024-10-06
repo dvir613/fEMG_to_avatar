@@ -14,57 +14,40 @@ import joblib
 
 from data_process.prepare_data_for_model import normalize_ica_data
 from CONSTS import *
-from send_data_to_CS import fill_symetrical
-from data_process.classifying_ica_components import filter_signal, wavelet_denoising, center, whiten
-
-
-def preprocess_emg_data(emg_data_chunk, fs=500, wavelet='db15'):
-    # Hila's preprocess functions should be here
-    # filter the data
-    filtered_emg_data_chunk = filter_signal(emg_data_chunk, fs)
-    # wavelet denoising
-    # TODO: verify with Hila the best parameters maybe need to change the wavelet denoising function for real-time
-    # filtered_emg_data_chunk = wavelet_denoising(filtered_emg_data_chunk, fs, wavelet, window_size=0.1, level=5)
-    # center the data
-    filtered_emg_data_chunk, _ = center(filtered_emg_data_chunk)
-    # whiten the data
-    filtered_emg_data_chunk = whiten(filtered_emg_data_chunk)
-    return filtered_emg_data_chunk
+from send_data_to_CS import fill_symetrical, mapping, blend_shapes
 
 
 def apply_and_order_ica_to_new_data(X_new, W, electrode_order):
-    # Step 1: Apply Hila's preprocess functions
-    X_new = preprocess_emg_data(X_new)
-
-    # Step 2: Apply the unmixing matrix to obtain the independent components
+    print("Applying ICA to new data")
+    # Step 1: Apply the unmixing matrix to obtain the independent components
     Y_new = np.dot(W, X_new.T)
 
-    # Step 3: Order the data according to the electrode order
+    # Order the data according to the electrode order
     Y_new_ordered = np.zeros_like(Y_new)
     for i, electrode in enumerate(electrode_order):
         if electrode != 16:
             Y_new_ordered[electrode, :] = Y_new[i, :]
 
-    # Step 4: Normalize the data
     Y_normalized = normalize_ica_data(Y_new_ordered)
 
     return Y_normalized
 
 
-def process_emg_data(emg_data_chunk, W, electrode_order, ml_model, fs=500):
-    # filter the data
-    emg_data_chunk = preprocess_emg_data(emg_data_chunk, fs)
+def process_emg_data(emg_data_chunk, W, electrode_order, ml_model):
+    print("running function")
     # Apply ICA transformation to the new data
     Y_data = apply_and_order_ica_to_new_data(emg_data_chunk, W, electrode_order)
 
     # apply RMS averaging
     Y_data = np.sqrt(np.mean(Y_data**2, axis=1))
+    print("Y data:", Y_data)
 
     # Pass through ML model for prediction
     predictions = ml_model.predict(Y_data.reshape(1, -1))
+    print("Predictions:", predictions)
+    predictions = pd.DataFrame(predictions, columns=relevant_blendshapes)
 
     # Fill the symmetrical blendshapes
-    predictions = pd.DataFrame(predictions, columns=relevant_blendshapes)
     full_predictions = fill_symetrical(predictions, mapping, blend_shapes)
 
     return full_predictions
@@ -112,9 +95,12 @@ if __name__ == '__main__':
     # just a dummy example to execute some preprocess before sending the data
     try:
         while True:
+            print(data.exg_data.shape[0])
             if data.exg_data.shape[0] > 2*fs/sending_data_frequency:
+                print("enough data to send")
                 windowed_data = data.exg_data[-int(2*fs/sending_data_frequency):, :16]  # send 2 windows of 0.05 seconds every time
-                data_to_send = process_emg_data(windowed_data, W, electrode_order, ml_model, fs)  # Process the data
+                # print(windowed_data)
+                data_to_send = process_emg_data(windowed_data, W, electrode_order, ml_model)  # Process the data
                 print("Sending data:", data_to_send.shape)
                 data_to_send = data_to_send.tobytes()  # Convert the data to bytes before sending
                 connection.sendall(data_to_send)

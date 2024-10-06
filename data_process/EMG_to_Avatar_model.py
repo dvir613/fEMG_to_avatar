@@ -489,11 +489,15 @@ def main():
 
     if args.build_individual_models:
         for participant_folder in os.listdir(args.data_path):
+            if participant_folder == 'participant_01':
+                continue
             if 'csv' in participant_folder:
                 continue
             participant_ID = participant_folder
             participant_folder_path = os.path.join(args.data_path, participant_folder)
             for session_folder in os.listdir(participant_folder_path):
+                if session_folder == 'S1':
+                    continue
                 session_folder_path = os.path.join(participant_folder_path, session_folder)
                 session_number = session_folder
 
@@ -503,7 +507,7 @@ def main():
 
                     # Load and prepare data (existing code)
                     ica_after_order = extract_and_order_ica_data(participant_ID, session_folder_path, session_number)
-                    edf_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}.edf")
+                    edf_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_edited.edf")
                     emg_file = mne.io.read_raw_edf(edf_path, preload=True)
                     emg_fs = emg_file.info['sfreq']
 
@@ -519,20 +523,28 @@ def main():
                     # Prepare data for model (existing code)
                     annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
                                         '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
-                    events_timings = get_annotations_timings(emg_file, annotations_list)
-                    trials_lst = [[2,8,16], [3,8,17], [4,10,18], [2,8,14], [2,9,17], [2,6,13], [2,8,14], [2,9,17], [2,6,11], [2,9,15]]
-                    trials_lst_timing = [[] for i in range(len(trials_lst))]
-                    for i in range(len(trials_lst)):
-                        for j in range(len(trials_lst[0])):
-                            trials_lst_timing[i].append(round(events_timings[i] + trials_lst[i][j]))
+                    # print all the annotations that contains the strings in annotations_list
+                    annotations_list_with_start_end = []
+                    for annotation in emg_file.annotations.description:
+                        for name in annotations_list:
+                    #         if annotation contains the name, append the annotation to the list
+                            if name in annotation:
+                                annotations_list_with_start_end.append(annotation)
+                    for annotation in annotations_list_with_start_end:
+                        if annotation in annotations_list:
+                    #         delete the annotation from the list
+                            annotations_list_with_start_end.remove(annotation)
+                    events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
+                    # make events_timings into a list with 10 lists that each contains the start and end of the annotation
+                    events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
                     if args.ica_flag:
-                        relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(ica_after_order, emg_file, emg_fs, trials_lst_timing,
+                        relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(ica_after_order, emg_file, emg_fs, events_timings,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
                     elif args.emg_flag:
-                        relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(X_full, emg_file, emg_fs, trials_lst_timing,
+                        relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(X_full, emg_file, emg_fs, events_timings,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
@@ -542,10 +554,13 @@ def main():
                     blendshapes = avatar_data.columns
                     relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
                                                                                                  relevant_data_train_emg, relevant_data_test_emg,
-                                                                                                 trials_lst_timing,
+                                                                                                 events_timings,
                                                                                                  fs=60, events_timings=events_timings,
                                                                                                  segments_length=args.segments_length, norm=None,
-                                                                                                 averaging="MEAN")
+                                                                                                 averaging="RMS")
+                    # plot ICA components vs avatar blendshapes
+                    # plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
+
                     X_train = relevant_data_train_emg.T
                     X_test = relevant_data_test_emg.T
                     Y_train = relevant_data_train_avatar.T
@@ -674,13 +689,14 @@ def main():
                         # Reset performance_results for the next session
                         performance_results = []
 
-                # convert the test values to the original scale
-                Y_test = relevant_data_test_avatar.T
-                # Save avatar data (existing code)
-                avatar_sliding_window_method = "MEAN"
-                pd.DataFrame(Y_test, columns=blendshapes).to_csv(
-                    os.path.join(session_folder_path, f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv"))
-                print("Avatar data saved as CSV file.\n")
+                    plot_predictions_vs_avatar(Y_pred, scaler_Y.inverse_transform(Y_test.cpu()), blendshapes)
+                    # convert the test values to the original scale
+                    Y_test = scaler_Y.inverse_transform(Y_test.cpu())
+                    # Save avatar data (existing code)
+                    avatar_sliding_window_method = "RMS"
+                    pd.DataFrame(Y_test, columns=blendshapes).to_csv(
+                        os.path.join(session_folder_path, f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv"))
+                    print("Avatar data saved as CSV file.\n")
 
     else:
         data_path = fr"{project_folder}\data"
@@ -703,7 +719,7 @@ def main():
 
                 # Load and prepare data (existing code)
                 ica_after_order = extract_and_order_ica_data(participant_ID, session_folder_path, session_number)
-                edf_path = fr"{session_folder_path}\{participant_ID}_{session_number}.edf"
+                edf_path = fr"{session_folder_path}\{participant_ID}_{session_number}_edited.edf"
                 emg_file = mne.io.read_raw_edf(edf_path, preload=True)
                 emg_fs = emg_file.info['sfreq']
 
@@ -793,6 +809,174 @@ def main():
         pd.DataFrame(Y_test, columns=blendshapes).to_csv(
             fr"{project_folder}\data\combined_avatar_blendshapes_MEAN.csv")
         print("Combined avatar test data saved as CSV file.")
+
+
+def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
+    exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
+    # Filter blendshapes to include only those with 'Right' and not in the exclude list
+    right_blendshapes = [bs for bs in blendshapes if
+                         'Right' in bs and bs not in exclude_blendshapes]
+    right_indices = [i for i, bs in enumerate(blendshapes) if
+                     'Right' in bs and bs not in exclude_blendshapes]
+    fig, axs = plt.subplots(len(right_blendshapes), 2, figsize=(20, 20), dpi=300)
+    plt.rcParams.update({'font.size': 28})  # Increase base font size
+    # Calculate the overall time range for both EMG and avatar data
+    max_time_emg = max(len(data) for data in Y_pred)
+    max_time_avatar = max(len(data) for data in Y_test)
+    max_time = max(max_time_emg, max_time_avatar)
+    # Add a suptitle
+    fig.suptitle('ICA Components and Blendshapes Comparison', fontsize=30)
+    # Find global min and max for ICA and blendshapes
+    ica_min = min(np.min(data) for data in Y_pred)
+    ica_max = max(np.max(data) for data in Y_pred)
+    blendshape_min = min(np.min(Y_test[i]) for i in right_indices)
+    blendshape_max = max(np.max(Y_test[i]) for i in right_indices)
+    for i, (blendshape, original_index) in enumerate(zip(right_blendshapes, right_indices)):
+
+        time_axis = np.arange(len(Y_pred[original_index]))
+        axs[i, 0].plot(time_axis, Y_pred[original_index])
+        axs[i, 0].set_ylabel(blendshape, rotation=0, ha='right', va='center', size=20)
+        axs[i, 0].set_ylim(ica_min, ica_max)  # Set the same y scale for all ICA plots
+
+        time_axis = np.arange(len(Y_test[original_index]))
+        axs[i, 1].plot(time_axis, Y_test[original_index])
+        axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center', size=20)
+        axs[i, 1].set_ylim(blendshape_min,
+                           blendshape_max)  # Set the same y scale for all blendshape plots
+
+        # Set the same x-axis limits for both subplots
+        axs[i, 0].set_xlim(0, max_time)
+        axs[i, 1].set_xlim(0, max_time)
+
+        # Remove top and right spines, keep only y-axis
+        for ax in [axs[i, 0], axs[i, 1]]:
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
+            ax.tick_params(axis='y', which='both', labelsize=16)  # Make yticks smaller
+
+        # Add horizontal line at y=0 for all subplots
+        axs[i, 0].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+        axs[i, 1].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+
+        # Remove x-axis labels for all but the bottom subplot
+        if i < len(right_blendshapes) - 1:
+            axs[i, 0].set_xticklabels([])
+            axs[i, 1].set_xticklabels([])
+        else:
+            # Add x-axis only for the bottom subplots
+            for ax in [axs[i, 0], axs[i, 1]]:
+                ax.spines['bottom'].set_visible(True)
+                ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
+            axs[i, 0].set_xlabel('Time (s)')
+            axs[i, 1].set_xlabel('Time (s)')
+    # Add ylabels for the 8 subplots
+    axs[0, 0].set_title('ICA Components')
+    axs[0, 1].set_title('Blendshapes')
+    # Adjust layout to prevent overlap
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust the rect parameter to make room for suptitle
+    plt.show()
+
+
+def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID):
+    emg_fs = int(emg_fs)
+    relevant_data_train = []
+    for i in range(len(events_timings)):
+        relevant_data_train.append(
+            ica_after_order[:, int(events_timings[i][0]) * emg_fs:int(events_timings[i][1]) * emg_fs])
+    relevant_data_train_emg = np.concatenate(relevant_data_train, axis=1)
+    time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
+    avatar_data = avatar_data.to_numpy().T
+    fs_emg = emg_file.info['sfreq']
+    print("original avatar data shape: ", avatar_data.shape)
+    avatar_fps = 60  # data collection was in 60 fps
+    frames_to_cut = int(time_delta * avatar_fps)
+    avatar_data = avatar_data[:, frames_to_cut:]
+    print("avatar data cut shape: ", avatar_data.shape)
+    avatar_fs = 60
+    relevant_data_avatar_train = []
+    for i in range(len(events_timings)):
+        relevant_data_avatar_train.append(
+            avatar_data[:, int(events_timings[i][0]) * avatar_fs:int(events_timings[i][1]) * avatar_fs])
+    relevant_data_train_avatar = np.concatenate(relevant_data_avatar_train, axis=1)
+    # Define blendshapes to exclude
+    exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
+
+    # Filter blendshapes to include only those with 'Right' and not in the exclude list
+    right_blendshapes = [bs for bs in blendshapes if
+                         'Right' in bs and bs not in exclude_blendshapes]
+    right_indices = [i for i, bs in enumerate(blendshapes) if
+                     'Right' in bs and bs not in exclude_blendshapes]
+
+    fig, axs = plt.subplots(len(right_blendshapes), 2, figsize=(20, 20), dpi=300)
+    plt.rcParams.update({'font.size': 28})  # Increase base font size
+
+    # Calculate the overall time range for both EMG and avatar data
+    max_time_emg = max(len(data) for data in relevant_data_train_emg) / emg_fs
+    max_time_avatar = max(len(data) for data in relevant_data_train_avatar) / avatar_fs
+    max_time = max(max_time_emg, max_time_avatar)
+
+    # Add a suptitle
+    fig.suptitle('ICA Components and Blendshapes Comparison', fontsize=30)
+
+    # Find global min and max for ICA and blendshapes
+    ica_min = min(np.min(data) for data in relevant_data_train_emg)
+    ica_max = max(np.max(data) for data in relevant_data_train_emg)
+    blendshape_min = min(np.min(relevant_data_train_avatar[i]) for i in right_indices)
+    blendshape_max = max(np.max(relevant_data_train_avatar[i]) for i in right_indices)
+
+    for i, (blendshape, original_index) in enumerate(zip(right_blendshapes, right_indices)):
+        # Reverse the order of ICA plots
+        ica_index = len(right_blendshapes) - i - 1
+
+        if ica_index < len(relevant_data_train_emg):
+            time_axis = np.arange(len(relevant_data_train_emg[ica_index])) / emg_fs
+            axs[i, 0].plot(time_axis, relevant_data_train_emg[ica_index, :])
+            axs[i, 0].set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center')
+            axs[i, 0].set_ylim(ica_min, ica_max)  # Set the same y scale for all ICA plots
+
+        time_axis = np.arange(len(relevant_data_train_avatar[original_index])) / avatar_fs
+        axs[i, 1].plot(time_axis, relevant_data_train_avatar[original_index])
+        axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center')
+        axs[i, 1].set_ylim(blendshape_min, blendshape_max)  # Set the same y scale for all blendshape plots
+
+        # Set the same x-axis limits for both subplots
+        axs[i, 0].set_xlim(0, max_time)
+        axs[i, 1].set_xlim(0, max_time)
+
+        # Remove top and right spines, keep only y-axis
+        for ax in [axs[i, 0], axs[i, 1]]:
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
+            ax.tick_params(axis='y', which='both', labelsize=16)  # Make yticks smaller
+
+        # Add horizontal line at y=0 for all subplots
+        axs[i, 0].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+        axs[i, 1].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+
+        # Remove x-axis labels for all but the bottom subplot
+        if i < len(right_blendshapes) - 1:
+            axs[i, 0].set_xticklabels([])
+            axs[i, 1].set_xticklabels([])
+        else:
+            # Add x-axis only for the bottom subplots
+            for ax in [axs[i, 0], axs[i, 1]]:
+                ax.spines['bottom'].set_visible(True)
+                ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
+            axs[i, 0].set_xlabel('Time (s)')
+            axs[i, 1].set_xlabel('Time (s)')
+
+    # Add ylabels for the 8 subplots
+    axs[0, 0].set_title('ICA Components')
+    axs[0, 1].set_title('Blendshapes')
+
+    # Adjust layout to prevent overlap
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust the rect parameter to make room for suptitle
+    plt.show()
+
 
 if __name__ == "__main__":
     main()

@@ -84,9 +84,10 @@ def prepare_relevant_data(data, emg_file, fs, trials_lst_timing, events_timings=
     relevant_data_train = []
     relevant_data_test = []
     for i in range(len(trials_lst_timing)):
-        relevant_data_train.append(data[:,trials_lst_timing[i][0] * fs:trials_lst_timing[i][0] * fs + segments_length * fs])
-        relevant_data_train.append(data[:,trials_lst_timing[i][1] * fs:trials_lst_timing[i][1] * fs + segments_length * fs])
-        relevant_data_test.append(data[:,trials_lst_timing[i][2] * fs:trials_lst_timing[i][2] * fs + segments_length * fs])
+        if i % 3 == 0 and i!=0:
+            relevant_data_test.append(data[:,int(trials_lst_timing[i][0]) * fs:int(trials_lst_timing[i][1]) * fs])
+        else:
+            relevant_data_train.append(data[:,int(trials_lst_timing[i][0] )* fs:int(trials_lst_timing[i][1]) * fs])
     relevant_data_train = np.concatenate(relevant_data_train, axis=1)
     relevant_data_test = np.concatenate(relevant_data_test, axis=1)
     if norm == "ICA":
@@ -110,13 +111,6 @@ def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant
 
     relevant_data_train_avatar, relevant_data_test_avatar =  prepare_relevant_data(avatar_data, emg_file, fs, trials_lst_timing, events_timings=events_timings,
                                                            segments_length=segments_length, norm=norm, averaging=averaging)
-
-    # Cut avatar windows to match the number of ICA windows
-    relevant_data_train_avatar = relevant_data_train_avatar[:, :relevant_data_train_emg.shape[1]]
-    relevant_data_test_avatar = relevant_data_test_avatar[:, :relevant_data_test_emg.shape[1]]
-
-    # print("ica windows shape:", emg_relevant_data_averaged.shape, "avatar windows shape:",
-    #       avatar_relevant_data_averaged_cut.shape)
     return relevant_data_train_avatar, relevant_data_test_avatar
 
 
