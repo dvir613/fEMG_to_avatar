@@ -824,8 +824,6 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
     max_time_emg = max(len(data) for data in Y_pred)
     max_time_avatar = max(len(data) for data in Y_test)
     max_time = max(max_time_emg, max_time_avatar)
-    # Add a suptitle
-    fig.suptitle('ICA Components and Blendshapes Comparison', fontsize=30)
     # Find global min and max for ICA and blendshapes
     ica_min = min(np.min(data) for data in Y_pred)
     ica_max = max(np.max(data) for data in Y_pred)
@@ -872,11 +870,12 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
             axs[i, 0].set_xlabel('Time (s)')
             axs[i, 1].set_xlabel('Time (s)')
     # Add ylabels for the 8 subplots
-    axs[0, 0].set_title('ICA Components')
-    axs[0, 1].set_title('Blendshapes')
+    axs[0, 0].set_title('Prdicted Blendshapes')
+    axs[0, 1].set_title('Ground Truth Blendshapes')
     # Adjust layout to prevent overlap
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust the rect parameter to make room for suptitle
     plt.show()
+    plt.close()
 
 
 def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID):
