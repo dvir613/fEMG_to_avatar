@@ -559,7 +559,7 @@ def main():
                                                                                                  segments_length=args.segments_length, norm=None,
                                                                                                  averaging="RMS")
                     # plot ICA components vs avatar blendshapes
-                    # plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
+                    plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
 
                     X_train = relevant_data_train_emg.T
                     X_test = relevant_data_test_emg.T
@@ -812,68 +812,67 @@ def main():
 
 
 def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
-    exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
-    # Filter blendshapes to include only those with 'Right' and not in the exclude list
-    right_blendshapes = [bs for bs in blendshapes if
-                         'Right' in bs and bs not in exclude_blendshapes]
-    right_indices = [i for i, bs in enumerate(blendshapes) if
-                     'Right' in bs and bs not in exclude_blendshapes]
-    fig, axs = plt.subplots(len(right_blendshapes), 2, figsize=(20, 20), dpi=300)
-    plt.rcParams.update({'font.size': 28})  # Increase base font size
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    fig, axs = plt.subplots(6, 6, figsize=(10, 10), dpi=300)
+    plt.rcParams.update({'font.size': 12})  # Adjust base font size
+
     # Calculate the overall time range for both EMG and avatar data
     max_time_emg = max(len(data) for data in Y_pred)
     max_time_avatar = max(len(data) for data in Y_test)
     max_time = max(max_time_emg, max_time_avatar)
-    # Find global min and max for ICA and blendshapes
-    ica_min = min(np.min(data) for data in Y_pred)
-    ica_max = max(np.max(data) for data in Y_pred)
-    blendshape_min = min(np.min(Y_test[i]) for i in right_indices)
-    blendshape_max = max(np.max(Y_test[i]) for i in right_indices)
-    for i, (blendshape, original_index) in enumerate(zip(right_blendshapes, right_indices)):
 
-        time_axis = np.arange(len(Y_pred[original_index]))
-        axs[i, 0].plot(time_axis, Y_pred[original_index])
-        axs[i, 0].set_ylabel(blendshape, rotation=0, ha='right', va='center', size=20)
-        axs[i, 0].set_ylim(ica_min, ica_max)  # Set the same y scale for all ICA plots
+    # Find global min and max for both predicted and ground truth
+    data_min = min(min(np.min(Y_pred[i]), np.min(Y_test[i])) for i in range(Y_test.shape[1]))
+    data_max = max(max(np.max(Y_pred[i]), np.max(Y_test[i])) for i in range(Y_test.shape[1]))
 
-        time_axis = np.arange(len(Y_test[original_index]))
-        axs[i, 1].plot(time_axis, Y_test[original_index])
-        axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center', size=20)
-        axs[i, 1].set_ylim(blendshape_min,
-                           blendshape_max)  # Set the same y scale for all blendshape plots
+    for idx, (blendshape, original_index) in enumerate(zip(right_blendshapes, range(Y_test.shape[1]))):
+        i, j = divmod(idx, 6)
+        ax = axs[i, j]
 
-        # Set the same x-axis limits for both subplots
-        axs[i, 0].set_xlim(0, max_time)
-        axs[i, 1].set_xlim(0, max_time)
+        time_axis_pred = np.arange(len(Y_pred[original_index]))
+        time_axis_test = np.arange(len(Y_test[original_index]))
 
-        # Remove top and right spines, keep only y-axis
-        for ax in [axs[i, 0], axs[i, 1]]:
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['bottom'].set_visible(False)
-            ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
-            ax.tick_params(axis='y', which='both', labelsize=16)  # Make yticks smaller
+        ax.plot(time_axis_pred, Y_pred[original_index], label='Predicted', color='blue')
+        ax.plot(time_axis_test, Y_test[original_index], label='Ground Truth', color='red')
 
-        # Add horizontal line at y=0 for all subplots
-        axs[i, 0].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
-        axs[i, 1].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+        ax.set_title(blendshape, fontsize=10)
+        ax.set_ylim(data_min, data_max)
+        ax.set_xlim(0, max_time)
 
-        # Remove x-axis labels for all but the bottom subplot
-        if i < len(right_blendshapes) - 1:
-            axs[i, 0].set_xticklabels([])
-            axs[i, 1].set_xticklabels([])
+        # Remove top and right spines
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+        # Add horizontal line at y=0
+        ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+
+        # Adjust tick parameters
+        ax.tick_params(axis='both', which='both', labelsize=8)
+
+        # Only show x-axis labels for bottom row
+        if i != 5:
+            ax.set_xticklabels([])
         else:
-            # Add x-axis only for the bottom subplots
-            for ax in [axs[i, 0], axs[i, 1]]:
-                ax.spines['bottom'].set_visible(True)
-                ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
-            axs[i, 0].set_xlabel('Time (s)')
-            axs[i, 1].set_xlabel('Time (s)')
-    # Add ylabels for the 8 subplots
-    axs[0, 0].set_title('Prdicted Blendshapes')
-    axs[0, 1].set_title('Ground Truth Blendshapes')
-    # Adjust layout to prevent overlap
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust the rect parameter to make room for suptitle
+            ax.set_xlabel('Time (s)', fontsize=10)
+
+        # Only show y-axis labels for left column
+        if j != 0:
+            ax.set_yticklabels([])
+
+    # Add legend to the 32nd subplot (lower right corner)
+    legend_i, legend_j = 5, 5  # Coordinates for the 32nd subplot
+    axs[legend_i, legend_j].legend(fontsize=8, loc='center')
+    axs[legend_i, legend_j].set_axis_off()  # Turn off axis for the legend subplot
+
+    # Remove any unused subplots
+    for idx in range(len(right_blendshapes), 36):
+        i, j = divmod(idx, 6)
+        if (i, j) != (legend_i, legend_j):  # Keep the legend subplot
+            fig.delaxes(axs[i, j])
+
+    plt.tight_layout()
     plt.show()
     plt.close()
 
@@ -900,6 +899,8 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
             avatar_data[:, int(events_timings[i][0]) * avatar_fs:int(events_timings[i][1]) * avatar_fs])
     relevant_data_train_avatar = np.concatenate(relevant_data_avatar_train, axis=1)
     # Define blendshapes to exclude
+    # Define blendshapes to exclude
+    # Define blendshapes to exclude
     exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
 
     # Filter blendshapes to include only those with 'Right' and not in the exclude list
@@ -908,37 +909,33 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
     right_indices = [i for i, bs in enumerate(blendshapes) if
                      'Right' in bs and bs not in exclude_blendshapes]
 
-    fig, axs = plt.subplots(len(right_blendshapes), 2, figsize=(20, 20), dpi=300)
+    fig, axs = plt.subplots(len(right_blendshapes), 2, figsize=(24, 24), dpi=300)
     plt.rcParams.update({'font.size': 28})  # Increase base font size
 
+    # Normalize ICA and blendshape data
+    def normalize_data(data):
+        return data / np.max(data)
+
+    normalized_emg = [normalize_data(data) for data in relevant_data_train_emg]
+    normalized_avatar = [normalize_data(data) for data in relevant_data_train_avatar]
+
     # Calculate the overall time range for both EMG and avatar data
-    max_time_emg = max(len(data) for data in relevant_data_train_emg) / emg_fs
-    max_time_avatar = max(len(data) for data in relevant_data_train_avatar) / avatar_fs
+    max_time_emg = max(len(data) for data in normalized_emg) / emg_fs
+    max_time_avatar = max(len(data) for data in normalized_avatar) / avatar_fs
     max_time = max(max_time_emg, max_time_avatar)
-
-    # Add a suptitle
-    fig.suptitle('ICA Components and Blendshapes Comparison', fontsize=30)
-
-    # Find global min and max for ICA and blendshapes
-    ica_min = min(np.min(data) for data in relevant_data_train_emg)
-    ica_max = max(np.max(data) for data in relevant_data_train_emg)
-    blendshape_min = min(np.min(relevant_data_train_avatar[i]) for i in right_indices)
-    blendshape_max = max(np.max(relevant_data_train_avatar[i]) for i in right_indices)
 
     for i, (blendshape, original_index) in enumerate(zip(right_blendshapes, right_indices)):
         # Reverse the order of ICA plots
         ica_index = len(right_blendshapes) - i - 1
 
-        if ica_index < len(relevant_data_train_emg):
-            time_axis = np.arange(len(relevant_data_train_emg[ica_index])) / emg_fs
-            axs[i, 0].plot(time_axis, relevant_data_train_emg[ica_index, :])
+        if ica_index < len(normalized_emg):
+            time_axis = np.arange(len(normalized_emg[ica_index])) / emg_fs
+            axs[i, 0].plot(time_axis, normalized_emg[ica_index], linewidth=0.8)
             axs[i, 0].set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center')
-            axs[i, 0].set_ylim(ica_min, ica_max)  # Set the same y scale for all ICA plots
 
-        time_axis = np.arange(len(relevant_data_train_avatar[original_index])) / avatar_fs
-        axs[i, 1].plot(time_axis, relevant_data_train_avatar[original_index])
+        time_axis = np.arange(len(normalized_avatar[original_index])) / avatar_fs
+        axs[i, 1].plot(time_axis, normalized_avatar[original_index], linewidth=0.8)
         axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center')
-        axs[i, 1].set_ylim(blendshape_min, blendshape_max)  # Set the same y scale for all blendshape plots
 
         # Set the same x-axis limits for both subplots
         axs[i, 0].set_xlim(0, max_time)
@@ -949,8 +946,8 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             ax.spines['bottom'].set_visible(False)
-            ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
-            ax.tick_params(axis='y', which='both', labelsize=16)  # Make yticks smaller
+            ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False, labelsize=20)
+            ax.tick_params(axis='y', which='both', labelsize=20)  # Make yticks smaller
 
         # Add horizontal line at y=0 for all subplots
         axs[i, 0].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
@@ -965,17 +962,17 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
             for ax in [axs[i, 0], axs[i, 1]]:
                 ax.spines['bottom'].set_visible(True)
                 ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
-            axs[i, 0].set_xlabel('Time (s)')
-            axs[i, 1].set_xlabel('Time (s)')
+            axs[i, 0].set_xlabel('Time (s)', size=28)
+            axs[i, 1].set_xlabel('Time (s)', size=28)
 
     # Add ylabels for the 8 subplots
-    axs[0, 0].set_title('ICA Components')
-    axs[0, 1].set_title('Blendshapes')
+    axs[0, 0].set_title('ICA Components', size=28)
+    axs[0, 1].set_title('Blendshapes', size=28)
 
     # Adjust layout to prevent overlap
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust the rect parameter to make room for suptitle
-    plt.show()
-
+    plt.savefig(fr"{project_folder}\results\{participant_ID}_ICA_vs_blendshapes.png")
+    plt.close()
 
 if __name__ == "__main__":
     main()
