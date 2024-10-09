@@ -559,7 +559,7 @@ def main():
                                                                                                  segments_length=args.segments_length, norm=None,
                                                                                                  averaging="RMS")
                     # plot ICA components vs avatar blendshapes
-                    plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
+                    # plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
 
                     X_train = relevant_data_train_emg.T
                     X_test = relevant_data_test_emg.T
@@ -812,9 +812,6 @@ def main():
 
 
 def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
-    import matplotlib.pyplot as plt
-    import numpy as np
-
     fig, axs = plt.subplots(6, 6, figsize=(10, 10), dpi=300)
     plt.rcParams.update({'font.size': 12})  # Adjust base font size
 
