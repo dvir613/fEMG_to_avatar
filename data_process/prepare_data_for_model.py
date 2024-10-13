@@ -4,7 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime, timezone, timedelta
-
+# set np seed
+np.random.seed(42)
 
 # Get the absolute path of the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -99,7 +100,148 @@ def prepare_relevant_data(data, emg_file, fs, trials_lst_timing, events_timings=
     return relevant_data_train, relevant_data_test
 
 
-def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant_data_train_emg, relevant_data_test_emg, trials_lst_timing, fs=60, events_timings=None, segments_length=35, norm=None, averaging="MEAN"):
+def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, rand_lst=None, events_timings=None,
+                              segments_length=35, norm=None, averaging="RMS"):
+    data_is_ICA = False
+    fs = int(fs)
+    relevant_data_train = []
+    relevant_data_test = []
+
+    if rand_lst is None:
+        rand_lst = []
+        data_is_ICA = True
+
+    for i in range(0, len(trials_lst_timing), 3):
+        group = trials_lst_timing[i:i + 3]
+        if group:  # Check if the group is not empty
+            if data_is_ICA:
+                rand = np.random.choice(len(group))
+                rand_lst.append(i + rand)
+            else:
+                rand = rand_lst[i // 3] - i  # Adjust the rand index to be relative to the current group
+
+            selected_trial = group[rand]
+            relevant_data_test.append(data[:, int(selected_trial[0]) * fs:int(selected_trial[1]) * fs])
+
+            for j, trial in enumerate(group):
+                if j != rand:
+                    relevant_data_train.append(data[:, int(trial[0]) * fs:int(trial[1]) * fs])
+
+    relevant_data_train = np.concatenate(relevant_data_train, axis=1)
+    relevant_data_test = np.concatenate(relevant_data_test, axis=1)
+
+    if norm == "ICA":
+        relevant_data_train = normalize_ica_data(relevant_data_train)
+        relevant_data_test = normalize_ica_data(relevant_data_test)
+
+    # sliding window averaging
+    relevant_data_train = sliding_window(relevant_data_train, method=averaging, fs=fs)
+    relevant_data_test = sliding_window(relevant_data_test, method=averaging, fs=fs)
+
+    return relevant_data_train, relevant_data_test, rand_lst
+
+
+def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID):
+    emg_fs = int(emg_fs)
+    rands_lst = []
+    relevant_data_test = []
+    for i in range(0, len(events_timings), 3):
+        group = events_timings[i:i + 3]
+        if group:  # Check if the group is not empty
+            rand = np.random.choice(len(group))
+            selected_event = group[rand]
+            relevant_data_test.append(
+                ica_after_order[:, int(selected_event[0]) * emg_fs:int(selected_event[1]) * emg_fs])
+            rands_lst.append(i + rand)
+    relevant_data_train_emg = np.concatenate(relevant_data_test, axis=1)
+    time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
+    avatar_data = avatar_data.to_numpy().T
+    print("original avatar data shape: ", avatar_data.shape)
+    avatar_fs = 60
+    frames_to_cut = int(time_delta * avatar_fs)
+    avatar_data = avatar_data[:, frames_to_cut:]
+    print("avatar data cut shape: ", avatar_data.shape)
+    relevant_data_avatar_test = []
+    for i, rand_index in enumerate(rands_lst):
+        selected_event = events_timings[rand_index]
+        relevant_data_avatar_test.append(
+            avatar_data[:, int(selected_event[0]) * avatar_fs:int(selected_event[1]) * avatar_fs])
+    relevant_data_train_avatar = np.concatenate(relevant_data_avatar_test, axis=1)
+    # Define blendshapes to exclude
+    exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
+
+    # Filter blendshapes to include only those with 'Right' and not in the exclude list
+    right_blendshapes = [bs for bs in blendshapes if
+                         'Right' in bs and bs not in exclude_blendshapes]
+    right_indices = [i for i, bs in enumerate(blendshapes) if
+                     'Right' in bs and bs not in exclude_blendshapes]
+
+    fig, axs = plt.subplots(len(right_blendshapes), 2, figsize=(24, 24), dpi=300)
+    plt.rcParams.update({'font.size': 28})  # Increase base font size
+
+    # Normalize ICA and blendshape data
+    def normalize_data(data):
+        return data / np.max(data)
+
+    normalized_emg = [normalize_data(data) for data in relevant_data_train_emg]
+    normalized_avatar = [normalize_data(data) for data in relevant_data_train_avatar]
+
+    # Calculate the overall time range for both EMG and avatar data
+    max_time_emg = max(len(data) for data in normalized_emg) / emg_fs
+    max_time_avatar = max(len(data) for data in normalized_avatar) / avatar_fs
+    max_time = max(max_time_emg, max_time_avatar)
+
+    for i, (blendshape, original_index) in enumerate(zip(right_blendshapes, right_indices)):
+        # Reverse the order of ICA plots
+        ica_index = len(right_blendshapes) - i - 1
+
+        if ica_index < len(normalized_emg):
+            time_axis = np.arange(len(normalized_emg[ica_index])) / emg_fs
+            axs[i, 0].plot(time_axis, normalized_emg[ica_index], linewidth=0.8)
+            axs[i, 0].set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center', size=28)
+
+        time_axis = np.arange(len(normalized_avatar[original_index])) / avatar_fs
+        axs[i, 1].plot(time_axis, normalized_avatar[original_index], linewidth=0.8)
+        axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center', size=28)
+
+        # Set the same x-axis limits for both subplots
+        axs[i, 0].set_xlim(0, max_time)
+        axs[i, 1].set_xlim(0, max_time)
+
+        # Remove top and right spines, keep only y-axis
+        for ax in [axs[i, 0], axs[i, 1]]:
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False, labelsize=20)
+            ax.tick_params(axis='y', which='both', labelsize=18)  # Make yticks smaller
+
+        # Add horizontal line at y=0 for all subplots
+        axs[i, 0].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+        axs[i, 1].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+
+        # Remove x-axis labels for all but the bottom subplot
+        if i < len(right_blendshapes) - 1:
+            axs[i, 0].set_xticklabels([])
+            axs[i, 1].set_xticklabels([])
+        else:
+            # Add x-axis only for the bottom subplots
+            for ax in [axs[i, 0], axs[i, 1]]:
+                ax.spines['bottom'].set_visible(True)
+                ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
+            axs[i, 0].set_xlabel('Time (s)', size=28)
+            axs[i, 1].set_xlabel('Time (s)', size=28)
+
+    # Add ylabels for the 8 subplots
+    axs[0, 0].set_title('ICA Components', size=28)
+    axs[0, 1].set_title('Blendshapes', size=28)
+
+    # Adjust layout to prevent overlap
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust the rect parameter to make room for suptitle
+    plt.savefig(fr"{project_folder}\results\{participant_ID}_ICA_vs_blendshapes.png")
+    plt.close()
+
+def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant_data_train_emg, relevant_data_test_emg, trials_lst_timing, rand_lst, fs=60, events_timings=None, segments_length=35, norm=None, averaging="MEAN"):
     time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
     avatar_data = avatar_data.to_numpy().T
     fs_emg = emg_file.info['sfreq']
@@ -109,7 +251,7 @@ def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant
     avatar_data = avatar_data[:, frames_to_cut:]
     print("avatar data cut shape: ", avatar_data.shape)
 
-    relevant_data_train_avatar, relevant_data_test_avatar =  prepare_relevant_data(avatar_data, emg_file, fs, trials_lst_timing, events_timings=events_timings,
+    relevant_data_train_avatar, relevant_data_test_avatar, rand_lst =  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, rand_lst, events_timings=events_timings,
                                                            segments_length=segments_length, norm=norm, averaging=averaging)
     return relevant_data_train_avatar, relevant_data_test_avatar
 

@@ -539,12 +539,12 @@ def main():
                     events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
                     if args.ica_flag:
-                        relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(ica_after_order, emg_file, emg_fs, events_timings,
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs, events_timings,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
                     elif args.emg_flag:
-                        relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(X_full, emg_file, emg_fs, events_timings,
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(X_full, emg_file, emg_fs, events_timings,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
@@ -554,12 +554,12 @@ def main():
                     blendshapes = avatar_data.columns
                     relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
                                                                                                  relevant_data_train_emg, relevant_data_test_emg,
-                                                                                                 events_timings,
+                                                                                                 events_timings, rand_lst,
                                                                                                  fs=60, events_timings=events_timings,
                                                                                                  segments_length=args.segments_length, norm=None,
                                                                                                  averaging="RMS")
                     # plot ICA components vs avatar blendshapes
-                    # plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
+                    plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
 
                     X_train = relevant_data_train_emg.T
                     X_test = relevant_data_test_emg.T
@@ -738,8 +738,8 @@ def main():
                     for j in range(len(trials_lst[0])):
                         trials_lst_timing[i].append(round(events_timings[i] + trials_lst[i][j]))
 
-                relevant_data_train_emg, relevant_data_test_emg = prepare_relevant_data(ica_after_order, emg_file, emg_fs,
-                                                                                        trials_lst_timing,
+                relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs,
+                                                                                        trials_lst_timing, rand_lst,
                                                                                         events_timings=events_timings,
                                                                                         segments_length=4, norm="ICA",
                                                                                         averaging="RMS")
@@ -876,27 +876,30 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
 
 def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID):
     emg_fs = int(emg_fs)
-    relevant_data_train = []
-    for i in range(len(events_timings)):
-        relevant_data_train.append(
-            ica_after_order[:, int(events_timings[i][0]) * emg_fs:int(events_timings[i][1]) * emg_fs])
-    relevant_data_train_emg = np.concatenate(relevant_data_train, axis=1)
+    rands_lst = []
+    relevant_data_test = []
+    for i in range(0, len(events_timings), 3):
+        group = events_timings[i:i + 3]
+        if group:  # Check if the group is not empty
+            rand = np.random.choice(len(group))
+            selected_event = group[rand]
+            relevant_data_test.append(
+                ica_after_order[:, int(selected_event[0]) * emg_fs:int(selected_event[1]) * emg_fs])
+            rands_lst.append(i + rand)
+    relevant_data_train_emg = np.concatenate(relevant_data_test, axis=1)
     time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
     avatar_data = avatar_data.to_numpy().T
-    fs_emg = emg_file.info['sfreq']
     print("original avatar data shape: ", avatar_data.shape)
-    avatar_fps = 60  # data collection was in 60 fps
-    frames_to_cut = int(time_delta * avatar_fps)
+    avatar_fs = 60
+    frames_to_cut = int(time_delta * avatar_fs)
     avatar_data = avatar_data[:, frames_to_cut:]
     print("avatar data cut shape: ", avatar_data.shape)
-    avatar_fs = 60
-    relevant_data_avatar_train = []
-    for i in range(len(events_timings)):
-        relevant_data_avatar_train.append(
-            avatar_data[:, int(events_timings[i][0]) * avatar_fs:int(events_timings[i][1]) * avatar_fs])
-    relevant_data_train_avatar = np.concatenate(relevant_data_avatar_train, axis=1)
-    # Define blendshapes to exclude
-    # Define blendshapes to exclude
+    relevant_data_avatar_test = []
+    for i, rand_index in enumerate(rands_lst):
+        selected_event = events_timings[rand_index]
+        relevant_data_avatar_test.append(
+            avatar_data[:, int(selected_event[0]) * avatar_fs:int(selected_event[1]) * avatar_fs])
+    relevant_data_train_avatar = np.concatenate(relevant_data_avatar_test, axis=1)
     # Define blendshapes to exclude
     exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
 
@@ -928,11 +931,11 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
         if ica_index < len(normalized_emg):
             time_axis = np.arange(len(normalized_emg[ica_index])) / emg_fs
             axs[i, 0].plot(time_axis, normalized_emg[ica_index], linewidth=0.8)
-            axs[i, 0].set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center')
+            axs[i, 0].set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center', size=28)
 
         time_axis = np.arange(len(normalized_avatar[original_index])) / avatar_fs
         axs[i, 1].plot(time_axis, normalized_avatar[original_index], linewidth=0.8)
-        axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center')
+        axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center', size=28)
 
         # Set the same x-axis limits for both subplots
         axs[i, 0].set_xlim(0, max_time)
@@ -944,7 +947,7 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
             ax.spines['right'].set_visible(False)
             ax.spines['bottom'].set_visible(False)
             ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False, labelsize=20)
-            ax.tick_params(axis='y', which='both', labelsize=20)  # Make yticks smaller
+            ax.tick_params(axis='y', which='both', labelsize=18)  # Make yticks smaller
 
         # Add horizontal line at y=0 for all subplots
         axs[i, 0].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
