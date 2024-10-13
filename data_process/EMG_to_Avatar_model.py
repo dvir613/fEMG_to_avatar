@@ -22,6 +22,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 from scipy.stats import ttest_rel
 import seaborn as sns
+from scipy import signal
 
 from prepare_data_for_model import *
 
@@ -517,8 +518,6 @@ def main():
                         X_full = emg_file.get_data()
                         X_full = filter_signal(X_full, emg_fs)
 
-                    X_full = normalize_ica_data(X_full)
-                    X_full_RMS = sliding_window(X_full, method="RMS", fs=emg_fs).T
 
                     # Prepare data for model (existing code)
                     annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
@@ -539,12 +538,12 @@ def main():
                     events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
                     if args.ica_flag:
-                        relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs, events_timings,
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs, events_timings, True,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
                     elif args.emg_flag:
-                        relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(X_full, emg_file, emg_fs, events_timings,
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(X_full, emg_file, emg_fs, events_timings, True,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
@@ -554,13 +553,13 @@ def main():
                     blendshapes = avatar_data.columns
                     relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
                                                                                                  relevant_data_train_emg, relevant_data_test_emg,
-                                                                                                 events_timings, rand_lst,
+                                                                                                 events_timings, True, rand_lst,
                                                                                                  fs=60, events_timings=events_timings,
                                                                                                  segments_length=args.segments_length, norm=None,
                                                                                                  averaging="RMS")
                     # plot ICA components vs avatar blendshapes
-                    plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID)
-
+                    plot_ica_vs_blendshapes(relevant_data_test_emg, relevant_data_test_avatar, blendshapes, emg_fs, 60,
+                                            participant_ID, session_number)
                     X_train = relevant_data_train_emg.T
                     X_test = relevant_data_test_emg.T
                     Y_train = relevant_data_train_avatar.T
@@ -874,32 +873,8 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
     plt.close()
 
 
-def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_timings, ica_after_order, participant_ID):
-    emg_fs = int(emg_fs)
-    rands_lst = []
-    relevant_data_test = []
-    for i in range(0, len(events_timings), 3):
-        group = events_timings[i:i + 3]
-        if group:  # Check if the group is not empty
-            rand = np.random.choice(len(group))
-            selected_event = group[rand]
-            relevant_data_test.append(
-                ica_after_order[:, int(selected_event[0]) * emg_fs:int(selected_event[1]) * emg_fs])
-            rands_lst.append(i + rand)
-    relevant_data_train_emg = np.concatenate(relevant_data_test, axis=1)
-    time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
-    avatar_data = avatar_data.to_numpy().T
-    print("original avatar data shape: ", avatar_data.shape)
-    avatar_fs = 60
-    frames_to_cut = int(time_delta * avatar_fs)
-    avatar_data = avatar_data[:, frames_to_cut:]
-    print("avatar data cut shape: ", avatar_data.shape)
-    relevant_data_avatar_test = []
-    for i, rand_index in enumerate(rands_lst):
-        selected_event = events_timings[rand_index]
-        relevant_data_avatar_test.append(
-            avatar_data[:, int(selected_event[0]) * avatar_fs:int(selected_event[1]) * avatar_fs])
-    relevant_data_train_avatar = np.concatenate(relevant_data_avatar_test, axis=1)
+def plot_ica_vs_blendshapes(relevant_data_test_emg, relevant_data_test_avatar, blendshapes, emg_fs, avatar_fs,
+                            participant_ID, session_number, plot_blendshapes=True):
     # Define blendshapes to exclude
     exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
 
@@ -909,15 +884,16 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
     right_indices = [i for i, bs in enumerate(blendshapes) if
                      'Right' in bs and bs not in exclude_blendshapes]
 
-    fig, axs = plt.subplots(len(right_blendshapes), 2, figsize=(24, 24), dpi=300)
+    num_plots = len(right_blendshapes)
+    fig, axs = plt.subplots(num_plots, 2 if plot_blendshapes else 1, figsize=(24, 24), dpi=300)
     plt.rcParams.update({'font.size': 28})  # Increase base font size
 
     # Normalize ICA and blendshape data
     def normalize_data(data):
         return data / np.max(data)
 
-    normalized_emg = [normalize_data(data) for data in relevant_data_train_emg]
-    normalized_avatar = [normalize_data(data) for data in relevant_data_train_avatar]
+    normalized_emg = [normalize_data(data) for data in relevant_data_test_emg]
+    normalized_avatar = [normalize_data(data) for data in relevant_data_test_avatar]
 
     # Calculate the overall time range for both EMG and avatar data
     max_time_emg = max(len(data) for data in normalized_emg) / emg_fs
@@ -929,50 +905,61 @@ def plot_ica_vs_blendshapes(avatar_data, blendshapes, emg_file, emg_fs, events_t
         ica_index = len(right_blendshapes) - i - 1
 
         if ica_index < len(normalized_emg):
-            time_axis = np.arange(len(normalized_emg[ica_index])) / emg_fs
-            axs[i, 0].plot(time_axis, normalized_emg[ica_index], linewidth=0.8)
-            axs[i, 0].set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center', size=28)
+            time_axis_emg = np.arange(len(normalized_emg[ica_index])) / emg_fs
+            ax_ica = axs[i, 0] if plot_blendshapes else axs[i]
+            ax_ica.plot(time_axis_emg, normalized_emg[ica_index], linewidth=0.8)
+            ax_ica.set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center', size=28)
+            ax_ica.set_xlim(0, max_time)
+            ax_ica.spines['top'].set_visible(False)
+            ax_ica.spines['right'].set_visible(False)
+            ax_ica.spines['bottom'].set_visible(False)
+            ax_ica.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False, labelsize=20)
+            ax_ica.tick_params(axis='y', which='both', labelsize=18)
+            ax_ica.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
 
-        time_axis = np.arange(len(normalized_avatar[original_index])) / avatar_fs
-        axs[i, 1].plot(time_axis, normalized_avatar[original_index], linewidth=0.8)
-        axs[i, 1].set_ylabel(blendshape, rotation=0, ha='right', va='center', size=28)
-
-        # Set the same x-axis limits for both subplots
-        axs[i, 0].set_xlim(0, max_time)
-        axs[i, 1].set_xlim(0, max_time)
-
-        # Remove top and right spines, keep only y-axis
-        for ax in [axs[i, 0], axs[i, 1]]:
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['bottom'].set_visible(False)
-            ax.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False, labelsize=20)
-            ax.tick_params(axis='y', which='both', labelsize=18)  # Make yticks smaller
-
-        # Add horizontal line at y=0 for all subplots
-        axs[i, 0].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
-        axs[i, 1].axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+        if plot_blendshapes:
+            time_axis_avatar = np.arange(len(normalized_avatar[original_index])) / avatar_fs
+            ax_blend = axs[i, 1]
+            ax_blend.plot(time_axis_avatar, normalized_avatar[original_index], linewidth=0.8)
+            ax_blend.set_ylabel(blendshape, rotation=0, ha='right', va='center', size=28)
+            ax_blend.set_xlim(0, max_time)
+            ax_blend.spines['top'].set_visible(False)
+            ax_blend.spines['right'].set_visible(False)
+            ax_blend.spines['bottom'].set_visible(False)
+            ax_blend.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False, labelsize=20)
+            ax_blend.tick_params(axis='y', which='both', labelsize=18)
+            ax_blend.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
 
         # Remove x-axis labels for all but the bottom subplot
-        if i < len(right_blendshapes) - 1:
-            axs[i, 0].set_xticklabels([])
-            axs[i, 1].set_xticklabels([])
+        if i < num_plots - 1:
+            if plot_blendshapes:
+                axs[i, 0].set_xticklabels([])
+                axs[i, 1].set_xticklabels([])
+            else:
+                axs[i].set_xticklabels([])
         else:
             # Add x-axis only for the bottom subplots
-            for ax in [axs[i, 0], axs[i, 1]]:
-                ax.spines['bottom'].set_visible(True)
-                ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
-            axs[i, 0].set_xlabel('Time (s)', size=28)
-            axs[i, 1].set_xlabel('Time (s)', size=28)
+            if plot_blendshapes:
+                for ax in [axs[i, 0], axs[i, 1]]:
+                    ax.spines['bottom'].set_visible(True)
+                    ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
+                axs[i, 0].set_xlabel('Time (s)', size=28)
+                axs[i, 1].set_xlabel('Time (s)', size=28)
+            else:
+                axs[i].spines['bottom'].set_visible(True)
+                axs[i].tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
+                axs[i].set_xlabel('Time (s)', size=28)
 
-    # Add ylabels for the 8 subplots
-    axs[0, 0].set_title('ICA Components', size=28)
-    axs[0, 1].set_title('Blendshapes', size=28)
+    # Add titles
+    if plot_blendshapes:
+        axs[0, 0].set_title('ICA Components', size=28)
+        axs[0, 1].set_title('Blendshapes', size=28)
+    else:
+        axs[0].set_title('ICA Components', size=28)
 
     # Adjust layout to prevent overlap
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust the rect parameter to make room for suptitle
-    plt.savefig(fr"{project_folder}\results\{participant_ID}_ICA_vs_blendshapes.png")
+    plt.savefig(fr"{project_folder}\results\{participant_ID}_{session_number}_{'ICA_vs_blendshapes' if plot_blendshapes else 'ICA_only'}.png")
     plt.close()
-
 if __name__ == "__main__":
     main()
