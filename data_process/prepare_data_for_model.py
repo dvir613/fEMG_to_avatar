@@ -106,6 +106,7 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
     fs = int(fs)
     relevant_data_train = []
     relevant_data_test = []
+    test_data_timing = []
 
     if rand_lst is None:
         rand_lst = []
@@ -124,6 +125,7 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
             current_facial_expressions = data[:, int(selected_trial[0]) * fs:int(selected_trial[1]) * fs]
             if for_plot_flag:
                 relevant_data_test.append(current_facial_expressions)
+                test_data_timing.append(selected_trial)
             else:
                 relevant_data_test.append(sliding_window(current_facial_expressions, method=averaging, fs=fs))
 
@@ -138,7 +140,7 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
     relevant_data_train = np.concatenate(relevant_data_train, axis=1)
     relevant_data_test = np.concatenate(relevant_data_test, axis=1)
 
-    return relevant_data_train, relevant_data_test, rand_lst
+    return relevant_data_train, relevant_data_test, rand_lst, test_data_timing
 
 
 def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant_data_train_emg, relevant_data_test_emg, trials_lst_timing, for_plot_flag, rand_lst, fs=60, events_timings=None, segments_length=35, norm=None, averaging="MEAN"):
@@ -149,7 +151,7 @@ def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant
     avatar_data = avatar_data[:, frames_to_cut:]
     print("avatar data cut shape: ", avatar_data.shape)
 
-    relevant_data_train_avatar, relevant_data_test_avatar, rand_lst =  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, for_plot_flag, rand_lst, events_timings=events_timings,
+    relevant_data_train_avatar, relevant_data_test_avatar, rand_lst, test_data_timing=  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, for_plot_flag, rand_lst, events_timings=events_timings,
                                                            segments_length=segments_length, norm=norm, averaging=averaging)
     # save only the same trials as the emg data
     # relevant_data_train_avatar = relevant_data_train_avatar[:, :relevant_data_train_emg.shape[1]]
