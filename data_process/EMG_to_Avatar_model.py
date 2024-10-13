@@ -23,6 +23,12 @@ from torch.utils.data import DataLoader, TensorDataset
 from scipy.stats import ttest_rel
 import seaborn as sns
 from scipy import signal
+from sklearn.model_selection import GridSearchCV
+from sklearn.base import BaseEstimator, RegressorMixin
+from torch.utils.data import DataLoader, TensorDataset
+import torch
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 
 from prepare_data_for_model import *
 
@@ -83,6 +89,114 @@ class EnhancedTransformNet(nn.Module):
         x = self.activation(self.layer1(x))
         x = self.activation(self.layer2(x))
         return self.output_layer(x)
+
+class ImprovedEnhancedTransformNet(nn.Module):
+    def __init__(self, input_dim, output_dim, hidden_dim=64, dropout_rate=0.2):
+        super(ImprovedEnhancedTransformNet, self).__init__()
+        self.layer1 = nn.Linear(input_dim, hidden_dim)
+        self.bn1 = nn.BatchNorm1d(hidden_dim)
+        self.layer2 = nn.Linear(hidden_dim, hidden_dim)
+        self.bn2 = nn.BatchNorm1d(hidden_dim)
+        self.output_layer = nn.Linear(hidden_dim, output_dim)
+        self.dropout = nn.Dropout(dropout_rate)
+        self.activation = nn.ReLU()
+
+    def forward(self, x):
+        x = self.dropout(self.activation(self.bn1(self.layer1(x))))
+        x = self.dropout(self.activation(self.bn2(self.layer2(x))))
+        return self.output_layer(x)
+    def get_transform_matrix(self):
+        return self.output_layer.weight.detach().cpu().numpy()
+
+def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0.01, patience=10):
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)  # Added L2 regularization
+    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+
+    train_losses = []
+    val_losses = []
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+
+    for epoch in range(epochs):
+        model.train()
+        optimizer.zero_grad()
+        outputs = model(X_train)
+        loss = criterion(outputs, Y_train)
+        loss.backward()
+        optimizer.step()
+        train_losses.append(loss.item())
+
+        model.eval()
+        with torch.no_grad():
+            val_outputs = model(X_val)
+            val_loss = criterion(val_outputs, Y_val)
+            val_losses.append(val_loss.item())
+
+        scheduler.step(val_loss)
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve == patience:
+            print(f'Early stopping triggered at epoch {epoch + 1}')
+            break
+
+        if (epoch + 1) % 10 == 0:
+            print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}')
+
+    return train_losses, val_losses
+
+
+def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[50, 100, 200, 300, 400, 500],
+                         lr_list=[0.001, 0.01, 0.1], hidden_dim_list=[32, 64, 128]):
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    best_params = None
+    best_score = float('inf')
+
+    for epochs in epochs_list:
+        for lr in lr_list:
+            for hidden_dim in hidden_dim_list:
+                scores = []
+                for train_index, val_index in kf.split(X):
+                    X_train, X_val = X[train_index], X[val_index]
+                    Y_train, Y_val = Y[train_index], Y[val_index]
+
+                    model = EnhancedTransformNet(input_dim, output_dim, hidden_dim).to(device)
+                    _, val_losses = train_model(model, X_train, Y_train, X_val, Y_val, epochs=epochs, lr=lr)
+                    scores.append(val_losses[-1])
+
+                avg_score = np.mean(scores)
+                if avg_score < best_score:
+                    best_score = avg_score
+                    best_params = {'epochs': epochs, 'lr': lr, 'hidden_dim': hidden_dim}
+
+    print(f"Best parameters: {best_params}")
+    print(f"Best validation score: {best_score:.4f}")
+
+    return best_params
+
+
+def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, best_params):
+    model = EnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim']).to(device)
+    train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test,
+                                            epochs=best_params['epochs'], lr=best_params['lr'])
+
+    return model, train_losses, test_losses
+
+
+def plot_model_performance(train_losses, test_losses):
+    plt.figure(figsize=(10, 6))
+    plt.plot(train_losses, label='Training Loss')
+    plt.plot(test_losses, label='Test Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Model Performance')
+    plt.legend()
+    plt.show()
 
 
 def train_model(model, X_train, Y_train, X_test, Y_test, epochs=100, lr=0.01):
@@ -538,12 +652,12 @@ def main():
                     events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
                     if args.ica_flag:
-                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs, events_timings, True,
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs, events_timings, False,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
                     elif args.emg_flag:
-                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(X_full, emg_file, emg_fs, events_timings, True,
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(X_full, emg_file, emg_fs, events_timings, False,
                                                                                                 events_timings=events_timings,
                                                                                                 segments_length=args.segments_length, norm="ICA",
                                                                                                 averaging="RMS")
@@ -553,13 +667,14 @@ def main():
                     blendshapes = avatar_data.columns
                     relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
                                                                                                  relevant_data_train_emg, relevant_data_test_emg,
-                                                                                                 events_timings, True, rand_lst,
+                                                                                                 events_timings, False, rand_lst,
                                                                                                  fs=60, events_timings=events_timings,
                                                                                                  segments_length=args.segments_length, norm=None,
                                                                                                  averaging="RMS")
                     # plot ICA components vs avatar blendshapes
-                    plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, relevant_data_test_avatar, blendshapes, emg_fs, 60,
-                                            participant_ID, session_number)
+                    # plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, emg_fs,
+                    #                         participant_ID,
+                    #                         session_number)
                     X_train = relevant_data_train_emg.T
                     X_test = relevant_data_test_emg.T
                     Y_train = relevant_data_train_avatar.T
@@ -586,17 +701,16 @@ def main():
                         output_dim = Y_train.shape[1]
 
                         if args.train_linear_transform:
-                            if args.train_enhanced_linear_transform:
-                                print("Training Enhanced Linear Transform Model...")
-                                model = EnhancedTransformNet(input_dim, output_dim).to(device)
-                            else:
-                                print("Training Linear Transform Model...")
-                                model = LinearTransformNet(input_dim, output_dim).to(device)
-                            # Train the model
-                            train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test, epochs=30, lr=0.01)
-
+                            best_params = tune_hyperparameters(X_train, Y_train, input_dim, output_dim)
+                            best_model, train_losses, test_losses = test_best_model(X_train, Y_train, X_test, Y_test,
+                                                                                    input_dim, output_dim, best_params)
+                            plot_model_performance(train_losses, test_losses)
+                            model = ImprovedEnhancedTransformNet(input_dim, output_dim).to(device)
+                            train_losses, val_losses = train_improved_model(model, X_train, Y_train, X_test, Y_test)
+                            plot_model_performance(train_losses, val_losses)
                             # Get the transformation matrix
-                            # transformation_matrix = model.linear.weight.detach().cpu().numpy()
+                            transformation_matrix = model.get_transform_matrix()
+
                             # Make predictions
                             model.eval()
                             with torch.no_grad():
@@ -688,7 +802,7 @@ def main():
                         # Reset performance_results for the next session
                         performance_results = []
 
-                    plot_predictions_vs_avatar(Y_pred, scaler_Y.inverse_transform(Y_test.cpu()), blendshapes)
+                    plot_predictions_vs_avatar(Y_pred, scaler_Y.inverse_transform(Y_test.cpu()), blendshapes, annotations_list, test_data_timing)
                     # convert the test values to the original scale
                     Y_test = scaler_Y.inverse_transform(Y_test.cpu())
                     # Save avatar data (existing code)
@@ -810,9 +924,19 @@ def main():
         print("Combined avatar test data saved as CSV file.")
 
 
-def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
-    fig, axs = plt.subplots(6, 6, figsize=(10, 10), dpi=300)
-    plt.rcParams.update({'font.size': 12})  # Adjust base font size
+def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, test_data_timing):
+    # Define blendshapes to exclude
+    exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
+
+    # Filter blendshapes to include only those with 'Right' and not in the exclude list
+    right_blendshapes = [bs for bs in blendshapes if
+                         'Right' in bs and bs not in exclude_blendshapes]
+    right_indices = [i for i, bs in enumerate(blendshapes) if
+                     'Right' in bs and bs not in exclude_blendshapes]
+
+    num_plots = len(right_indices)
+    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24), dpi=300, sharex=True)  # Increased width and added sharex
+    plt.rcParams.update({'font.size': 20})  # Reduced base font size
 
     # Calculate the overall time range for both EMG and avatar data
     max_time_emg = max(len(data) for data in Y_pred)
@@ -823,17 +947,22 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
     data_min = min(min(np.min(Y_pred[i]), np.min(Y_test[i])) for i in range(Y_test.shape[1]))
     data_max = max(max(np.max(Y_pred[i]), np.max(Y_test[i])) for i in range(Y_test.shape[1]))
 
-    for idx, (blendshape, original_index) in enumerate(zip(right_blendshapes, range(Y_test.shape[1]))):
-        i, j = divmod(idx, 6)
-        ax = axs[i, j]
+    # Process annotations
+    annotations_list_edited = [annot[2:].replace("_", " ") for annot in annotations_list]
+    annotation_positions = [sum(int(test_data_timing[j][1] - test_data_timing[j][0])//1.26 for j in range(i)) for i in
+                            range(len(test_data_timing))]
+    annotation_positions.append(max_time)  # Add the last position
+
+    for i, (blendshape, original_index) in enumerate(zip(right_blendshapes, right_indices)):
+        ax = axs[i] if num_plots > 1 else axs  # Handle case when there's only one subplot
 
         time_axis_pred = np.arange(len(Y_pred[original_index]))
         time_axis_test = np.arange(len(Y_test[original_index]))
 
-        ax.plot(time_axis_pred, Y_pred[original_index], label='Predicted', color='blue')
-        ax.plot(time_axis_test, Y_test[original_index], label='Ground Truth', color='red')
+        # Increased linewidth for both plots
+        ax.plot(time_axis_pred, Y_pred[original_index], label='Predicted', color='blue', linewidth=4)
+        ax.plot(time_axis_test, Y_test[original_index], label='Ground Truth', color='red', linestyle='--', linewidth=4)
 
-        ax.set_title(blendshape, fontsize=10)
         ax.set_ylim(data_min, data_max)
         ax.set_xlim(0, max_time)
 
@@ -842,34 +971,29 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes):
         ax.spines['right'].set_visible(False)
 
         # Add horizontal line at y=0
-        ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+        ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.7)
 
         # Adjust tick parameters
-        ax.tick_params(axis='both', which='both', labelsize=8)
+        ax.tick_params(axis='both', which='both', labelsize=16)  # Reduced tick label size
 
-        # Only show x-axis labels for bottom row
-        if i != 5:
-            ax.set_xticklabels([])
-        else:
-            ax.set_xlabel('Time (s)', fontsize=10)
+        # Add y-axis label for all subplots
+        ax.set_ylabel(f'{blendshape}', rotation=0, ha='right', va='center', fontsize=24)
 
-        # Only show y-axis labels for left column
-        if j != 0:
-            ax.set_yticklabels([])
+        # Adjust y-axis label position
+        ax.yaxis.set_label_coords(-0.1, 0.5)  # Move y-label to the left
 
-    # Add legend to the 32nd subplot (lower right corner)
-    legend_i, legend_j = 5, 5  # Coordinates for the 32nd subplot
-    axs[legend_i, legend_j].legend(fontsize=8, loc='center')
-    axs[legend_i, legend_j].set_axis_off()  # Turn off axis for the legend subplot
+        # Add vertical lines for annotations
+        for pos in annotation_positions[:-1]:
+            ax.axvline(x=pos, color='red', linestyle='--', linewidth=0.7, alpha=0.7)
 
-    # Remove any unused subplots
-    for idx in range(len(right_blendshapes), 36):
-        i, j = divmod(idx, 6)
-        if (i, j) != (legend_i, legend_j):  # Keep the legend subplot
-            fig.delaxes(axs[i, j])
+    # Set xticks and labels only for the bottom subplot
+    ax_bottom = axs[-1] if num_plots > 1 else axs
+    ax_bottom.set_xticks(annotation_positions)
+    ax_bottom.set_xticklabels(annotations_list_edited + [" "], rotation=90, ha='center', va='top', fontsize=18)
+    ax_bottom.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True, labelsize=24)
 
-    plt.tight_layout()
-    plt.show()
+    plt.tight_layout(rect=[0.05, 0.03, 1, 0.97])  # Adjust margins
+    plt.savefig(fr"{project_folder}\results\predictions_vs_avatar.png")
     plt.close()
 
 
@@ -918,13 +1042,14 @@ def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_te
     # Set xticks and labels only for the bottom subplot
     ax_bottom = axs[-1]
     ax_bottom.set_xticks(annotation_positions)
-    ax_bottom.set_xticklabels(annotations_list_edited + [''], rotation=90, ha='center', va='top', fontsize=28)
+    ax_bottom.set_xticklabels(annotations_list_edited + [" "], rotation=90, ha='center', va='top', fontsize=28)
     ax_bottom.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True, labelsize=28)
 
     # Adjust layout to prevent overlap
     plt.tight_layout(rect=[0, 0.03, 1, 0.90])  # Adjust the rect parameter to make room for suptitle
     plt.savefig(fr"{project_folder}\results\{participant_ID}_{session_number}_ICA_components.png")
     plt.close()
+
 
 if __name__ == "__main__":
     main()

@@ -109,18 +109,14 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
     test_data_timing = []
 
     if rand_lst is None:
-        rand_lst = []
         data_is_ICA = True
+        num_groups = len(trials_lst_timing) // 3
+        rand_lst = np.random.choice(3, size=num_groups)  # Adjust rand_lst to be relative to each group
 
-    for i in range(0, len(trials_lst_timing), 3):
-        group = trials_lst_timing[i:i + 3]
+    for i, rand in enumerate(rand_lst):
+        group_start = i * 3
+        group = trials_lst_timing[group_start:group_start + 3]
         if group:  # Check if the group is not empty
-            if data_is_ICA:
-                rand = np.random.choice(len(group))
-                rand_lst.append(i + rand)
-            else:
-                rand = rand_lst[i // 3] - i  # Adjust the rand index to be relative to the current group
-
             selected_trial = group[rand]
             current_facial_expressions = data[:, int(selected_trial[0]) * fs:int(selected_trial[1]) * fs]
             if for_plot_flag:
@@ -128,6 +124,7 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
                 test_data_timing.append(selected_trial)
             else:
                 relevant_data_test.append(sliding_window(current_facial_expressions, method=averaging, fs=fs))
+                test_data_timing.append(selected_trial)
 
             for j, trial in enumerate(group):
                 if j != rand:
@@ -151,7 +148,7 @@ def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant
     avatar_data = avatar_data[:, frames_to_cut:]
     print("avatar data cut shape: ", avatar_data.shape)
 
-    relevant_data_train_avatar, relevant_data_test_avatar, rand_lst, test_data_timing=  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, for_plot_flag, rand_lst, events_timings=events_timings,
+    relevant_data_train_avatar, relevant_data_test_avatar, rand_lst ,test_data_timing =  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, for_plot_flag, rand_lst, events_timings=events_timings,
                                                            segments_length=segments_length, norm=norm, averaging=averaging)
     # save only the same trials as the emg data
     # relevant_data_train_avatar = relevant_data_train_avatar[:, :relevant_data_train_emg.shape[1]]
