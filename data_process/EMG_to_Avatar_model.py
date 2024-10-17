@@ -92,13 +92,15 @@ class EnhancedTransformNet(nn.Module):
         return self.output_layer(x)
 
 class ImprovedEnhancedTransformNet(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim=64, dropout_rate=0.2):
+    def __init__(self, input_dim, output_dim, hidden_dim=64, dropout_rate=0.4):
         super(ImprovedEnhancedTransformNet, self).__init__()
         self.layer1 = nn.Linear(input_dim, hidden_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.layer2 = nn.Linear(hidden_dim, hidden_dim)
         self.bn2 = nn.BatchNorm1d(hidden_dim)
-        self.output_layer = nn.Linear(hidden_dim, output_dim)
+        self.layer2 = nn.Linear(hidden_dim, input_dim)
+        self.bn2 = nn.BatchNorm1d(input_dim)
+        self.output_layer = nn.Linear(input_dim, output_dim)
         self.dropout = nn.Dropout(dropout_rate)
         self.activation = nn.ReLU()
 
@@ -113,6 +115,11 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)  # Added L2 regularization
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+    # shuffle training set
+    indices = np.arange(X_train.shape[0])
+    np.random.shuffle(indices)
+    X_train = X_train[indices]
+    Y_train = Y_train[indices]
 
     train_losses = []
     val_losses = []
@@ -123,7 +130,8 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0
         model.train()
         optimizer.zero_grad()
         outputs = model(X_train)
-        loss = criterion(outputs, Y_train)
+        loss = pearson_correlation_loss(outputs, Y_train)
+        # loss = criterion(outputs, Y_train)
         loss.backward()
         optimizer.step()
         train_losses.append(loss.item())
@@ -131,7 +139,8 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0
         model.eval()
         with torch.no_grad():
             val_outputs = model(X_val)
-            val_loss = criterion(val_outputs, Y_val)
+            # val_loss = criterion(val_outputs, Y_val)
+            val_loss = pearson_correlation_loss(val_outputs, Y_val)
             val_losses.append(val_loss.item())
 
         scheduler.step(val_loss)
@@ -142,14 +151,14 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0
         else:
             epochs_no_improve += 1
 
-        if epochs_no_improve == patience:
-            print(f'Early stopping triggered at epoch {epoch + 1}')
-            break
+        # if epochs_no_improve == patience:
+        #     print(f'Early stopping triggered at epoch {epoch + 1}')
+        #     break
 
         if (epoch + 1) % 10 == 0:
             print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}')
 
-    return train_losses, val_losses
+    return model, train_losses, val_losses, val_outputs
 
 
 def load_best_params(filename='best_params.json'):
@@ -173,7 +182,7 @@ def save_best_params(best_params, filename='best_params.json'):
 
 
 def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[50, 100, 200, 300, 400, 500],
-                         lr_list=[0.001, 0.01, 0.1], hidden_dim_list=[32, 64, 128], filename='best_params.json'):
+                         lr_list=[0.001, 0.01, 0.1], hidden_dim_list=[32, 64, 128], filename='best_params.json', model_name='EnhancedTransformNet'):
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     best_params = None
     best_score = float('inf')
@@ -185,8 +194,12 @@ def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[5
                 for train_index, val_index in kf.split(X):
                     X_train, X_val = X[train_index], X[val_index]
                     Y_train, Y_val = Y[train_index], Y[val_index]
-
-                    model = EnhancedTransformNet(input_dim, output_dim, hidden_dim).to(device)
+                    if model_name == 'EnhancedTransformNet':
+                        model = EnhancedTransformNet(input_dim, output_dim, hidden_dim).to(device)
+                    elif model_name == 'LinearTransformNet':
+                        model = LinearTransformNet(input_dim, output_dim).to(device)
+                    elif model_name == 'ImprovedEnhancedTransformNet':
+                        model = ImprovedEnhancedTransformNet(input_dim, output_dim, hidden_dim).to(device)
                     _, val_losses = train_model(model, X_train, Y_train, X_val, Y_val, epochs=epochs, lr=lr)
                     scores.append(val_losses[-1])
 
@@ -197,17 +210,20 @@ def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[5
 
     print(f"Best parameters: {best_params}")
     print(f"Best validation score: {best_score:.4f}")
-
     save_best_params(best_params, filename)
     return best_params
 
 
-def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, best_params):
-    model = EnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim']).to(device)
-    train_losses, test_losses = train_model(model, X_train, Y_train, X_test, Y_test,
-                                            epochs=best_params['epochs'], lr=best_params['lr'])
-
-    return model, train_losses, test_losses
+def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, best_params, model_name='EnhancedTransformNet'):
+    if model_name == 'EnhancedTransformNet':
+        model = EnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim']).to(device)
+    elif model_name == 'LinearTransformNet':
+        model = LinearTransformNet(input_dim, output_dim).to(device)
+    elif model_name == 'ImprovedEnhancedTransformNet':
+        model = ImprovedEnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim']).to(device)
+    model, train_losses, val_losses, val_outputs = train_improved_model(model, X_train, Y_train, X_test, Y_test,
+                                                    epochs=best_params['epochs'], lr=best_params['lr'])
+    return model, train_losses, val_losses, val_outputs
 
 
 def plot_model_performance(train_losses, test_losses, dropout_rate=None):
@@ -242,6 +258,7 @@ def train_model(model, X_train, Y_train, X_test, Y_test, epochs=100, lr=0.01):
         model.train()
         optimizer.zero_grad()
         outputs = model(X_train)
+        # loss = pearson_correlation_loss(outputs, Y_train)
         loss = criterion(outputs, Y_train)
         loss.backward()
         optimizer.step()
@@ -252,6 +269,7 @@ def train_model(model, X_train, Y_train, X_test, Y_test, epochs=100, lr=0.01):
         with torch.no_grad():
             test_outputs = model(X_test)
             test_loss = criterion(test_outputs, Y_test)
+            # test_loss = pearson_correlation_loss(test_outputs, Y_test)
             test_losses.append(test_loss.item())
 
         if (epoch + 1) % 100 == 0:
@@ -335,8 +353,8 @@ def pearson_correlation_loss(y_pred, y_true):
     mean_true = torch.mean(y_true)
 
     # Compute variances
-    vx = y_pred - mean_pred
-    vy = y_true - mean_true
+    vx = torch.subtract(y_pred, mean_pred)
+    vy = torch.subtract(y_true, mean_true)
 
     # Compute correlation
     numerator = torch.sum(vx * vy)
@@ -705,7 +723,7 @@ def main():
                     Y_train = relevant_data_train_avatar.T
                     Y_test = relevant_data_test_avatar.T
 
-                    # Standardize the features
+                    # # Standardize the features
                     scaler_X = StandardScaler()
                     scaler_Y = StandardScaler()
 
@@ -726,39 +744,39 @@ def main():
                         output_dim = Y_train.shape[1]
 
                         if args.train_linear_transform:
-                            path_to_best_params = f"{project_folder}/results/best_params.json"
-                            best_params = load_best_params(path_to_best_params)
+                            model_name = 'ImprovedEnhancedTransformNet'
+                            path_to_best_params = fr"{project_folder}/results/best_params_{model_name}.json"
+                            # best_params = load_best_params(path_to_best_params)
+                            best_params = None
                             if best_params is None:
                                 print("Best parameters not found. Running hyperparameter tuning...")
-                                best_params = tune_hyperparameters(X_train, Y_train, input_dim, output_dim, filename=path_to_best_params)
-                                best_model, train_losses, test_losses = test_best_model(X_train, Y_train, X_test, Y_test,
-                                                                                        input_dim, output_dim, best_params)
-                                plot_model_performance(train_losses, test_losses)
+                                best_params = tune_hyperparameters(X_train, Y_train, input_dim, output_dim,
+                                                                   filename=path_to_best_params,
+                                                                   model_name='ImprovedEnhancedTransformNet')
+
                             else:
                                 print("Loaded best parameters:", best_params)
-                            for dropout_rate in [0.2, 0.4, 0.5, 0.6, 0.7]:
-                                # save best parameters
-                                model = ImprovedEnhancedTransformNet(input_dim, output_dim, dropout_rate=dropout_rate).to(device)
-                                train_losses, val_losses = train_improved_model(model, X_train, Y_train, X_test, Y_test)
-                                plot_model_performance(train_losses, val_losses, dropout_rate)
-                            # Make predictions
-                            model.eval()
-                            with torch.no_grad():
-                                Y_pred = model(X_test)
+                            best_model, train_losses, test_losses, Y_pred = test_best_model(X_train, Y_train, X_test,
+                                                                                    Y_test,
+                                                                                    input_dim, output_dim,
+                                                                                    best_params,
+                                                                                    model_name=
+                                                                                    'ImprovedEnhancedTransformNet')
+                            plot_model_performance(train_losses, test_losses)
+                            #    save the model
+                            model_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_{model_name}_{config}.joblib")
+                            joblib.dump(best_model, model_path)
+                            print(f"Model {model_name} for {config} saved as {model_path}")
+
                             # Move predictions back to CPU for further processing
-                            Y_pred = Y_pred.cpu()
+                            Y_pred = Y_pred.cpu().numpy()
 
                             if args.save_results:
-                                model_name = 'LinearTransform'
                                 # perform the inverse transformation to get the original values
                                 Y_pred = scaler_Y.inverse_transform(Y_pred)
                                 pred_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
                                 pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
                                 print(f"Predicted data saved as {pred_path}")
-                                model_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib")
-                                # Save model
-                                joblib.dump(model, model_path)
-                                print(f"Model {model_name} for {config} saved as {model_path}")
 
                         if args.train_autoencoder:
                             print("Training Autoencoder Model...")
@@ -832,9 +850,9 @@ def main():
                         # Reset performance_results for the next session
                         performance_results = []
 
-                    plot_predictions_vs_avatar(Y_pred, scaler_Y.inverse_transform(Y_test.cpu()), blendshapes, annotations_list, test_data_timing)
+                    plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list, test_data_timing)
                     # convert the test values to the original scale
-                    Y_test = scaler_Y.inverse_transform(Y_test.cpu())
+                    Y_test = relevant_data_test_avatar.T
                     # Save avatar data (existing code)
                     avatar_sliding_window_method = "RMS"
                     pd.DataFrame(Y_test, columns=blendshapes).to_csv(
@@ -955,18 +973,9 @@ def main():
 
 
 def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, test_data_timing):
-    # Define blendshapes to exclude
-    exclude_blendshapes = {'EyeLookInRight', 'NoseSneerRight', 'EyeLookUpRight', 'MouthDimpleRight'}
-
-    # Filter blendshapes to include only those with 'Right' and not in the exclude list
-    right_blendshapes = [bs for bs in blendshapes if
-                         'Right' in bs and bs not in exclude_blendshapes]
-    right_indices = [i for i, bs in enumerate(blendshapes) if
-                     'Right' in bs and bs not in exclude_blendshapes]
-
-    num_plots = len(right_indices)
-    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24), dpi=300, sharex=True)  # Increased width and added sharex
-    plt.rcParams.update({'font.size': 20})  # Reduced base font size
+    num_plots = len(blendshapes)
+    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24*num_plots//31), dpi=300, sharex=True)
+    plt.rcParams.update({'font.size': 20})
 
     # Calculate the overall time range for both EMG and avatar data
     max_time_emg = max(len(data) for data in Y_pred)
@@ -983,15 +992,15 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
                             range(len(test_data_timing))]
     annotation_positions.append(max_time)  # Add the last position
 
-    for i, (blendshape, original_index) in enumerate(zip(right_blendshapes, right_indices)):
+    for i, blendshape in enumerate(blendshapes):
         ax = axs[i] if num_plots > 1 else axs  # Handle case when there's only one subplot
 
-        time_axis_pred = np.arange(len(Y_pred[original_index]))
-        time_axis_test = np.arange(len(Y_test[original_index]))
+        time_axis_pred = np.arange(len(Y_pred[i]))
+        time_axis_test = np.arange(len(Y_test[i]))
 
         # Increased linewidth for both plots
-        ax.plot(time_axis_pred, Y_pred[original_index], label='Predicted', color='blue', linewidth=4)
-        ax.plot(time_axis_test, Y_test[original_index], label='Ground Truth', color='red', linestyle='--', linewidth=4)
+        ax.plot(time_axis_pred, Y_pred[i], label='Predicted', color='blue', linewidth=4)
+        ax.plot(time_axis_test, Y_test[i], label='Ground Truth', color='red', linestyle='--', linewidth=4)
 
         ax.set_ylim(data_min, data_max)
         ax.set_xlim(0, max_time)

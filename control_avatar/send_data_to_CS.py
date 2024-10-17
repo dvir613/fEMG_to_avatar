@@ -65,7 +65,7 @@ if __name__ == '__main__':
     session_number = '2'
     # LinearTransform_ICA
     # Autoencoder_ICA
-    model = "LinearTransform"  # "LR" for linear regression, "ETR" for extra trees regressor
+    model = "ImprovedEnhancedTransformNet"  # "LR" for linear regression, "ETR" for extra trees regressor
     avatar_avaraging_method = "RMS"
 
     # Prepare the data

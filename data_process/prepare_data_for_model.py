@@ -16,9 +16,11 @@ project_folder = os.path.abspath(os.path.join(script_dir, '..'))
 # window length and step length in seconds
 def sliding_window(data, method, fs, window_length=0.1, step_length=0.05):
     window_size = int(window_length * fs)
-    step_size = int(step_length * fs)
+    step_size = window_size  # Set step size equal to window size for disjoint windows
+
     # Calculate number of windows
-    num_windows = (data.shape[1] - window_size) // step_size + 1
+    num_windows = data.shape[1] // window_size
+
     # print(num_windows)
     result = np.zeros((data.shape[0], num_windows))
     if method == "RMS":
