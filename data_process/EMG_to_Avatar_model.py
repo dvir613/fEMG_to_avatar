@@ -1,5 +1,6 @@
 import mne
 import argparse
+import json
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -151,8 +152,28 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0
     return train_losses, val_losses
 
 
+def load_best_params(filename='best_params.json'):
+    if os.path.exists(filename):
+        try:
+            with open(filename, 'r') as f:
+                content = f.read().strip()
+                if content:  # Check if the file is not empty
+                    return json.loads(content)
+                else:
+                    print(f"Warning: {filename} is empty.")
+                    return None
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON from {filename}: {e}")
+            return None
+    return None
+
+def save_best_params(best_params, filename='best_params.json'):
+    with open(filename, 'w') as f:
+        json.dump(best_params, f)
+
+
 def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[50, 100, 200, 300, 400, 500],
-                         lr_list=[0.001, 0.01, 0.1], hidden_dim_list=[32, 64, 128]):
+                         lr_list=[0.001, 0.01, 0.1], hidden_dim_list=[32, 64, 128], filename='best_params.json'):
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     best_params = None
     best_score = float('inf')
@@ -177,6 +198,7 @@ def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[5
     print(f"Best parameters: {best_params}")
     print(f"Best validation score: {best_score:.4f}")
 
+    save_best_params(best_params, filename)
     return best_params
 
 
@@ -188,13 +210,16 @@ def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, bes
     return model, train_losses, test_losses
 
 
-def plot_model_performance(train_losses, test_losses):
+def plot_model_performance(train_losses, test_losses, dropout_rate=None):
     plt.figure(figsize=(10, 6))
     plt.plot(train_losses, label='Training Loss')
     plt.plot(test_losses, label='Test Loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
-    plt.title('Model Performance')
+    if dropout_rate is not None:
+        plt.title(f'Model Performance with Dropout Rate: {dropout_rate}')
+    else:
+        plt.title('Model Performance')
     plt.legend()
     plt.show()
 
@@ -701,16 +726,21 @@ def main():
                         output_dim = Y_train.shape[1]
 
                         if args.train_linear_transform:
-                            best_params = tune_hyperparameters(X_train, Y_train, input_dim, output_dim)
-                            best_model, train_losses, test_losses = test_best_model(X_train, Y_train, X_test, Y_test,
-                                                                                    input_dim, output_dim, best_params)
-                            plot_model_performance(train_losses, test_losses)
-                            model = ImprovedEnhancedTransformNet(input_dim, output_dim).to(device)
-                            train_losses, val_losses = train_improved_model(model, X_train, Y_train, X_test, Y_test)
-                            plot_model_performance(train_losses, val_losses)
-                            # Get the transformation matrix
-                            transformation_matrix = model.get_transform_matrix()
-
+                            path_to_best_params = f"{project_folder}/results/best_params.json"
+                            best_params = load_best_params(path_to_best_params)
+                            if best_params is None:
+                                print("Best parameters not found. Running hyperparameter tuning...")
+                                best_params = tune_hyperparameters(X_train, Y_train, input_dim, output_dim, filename=path_to_best_params)
+                                best_model, train_losses, test_losses = test_best_model(X_train, Y_train, X_test, Y_test,
+                                                                                        input_dim, output_dim, best_params)
+                                plot_model_performance(train_losses, test_losses)
+                            else:
+                                print("Loaded best parameters:", best_params)
+                            for dropout_rate in [0.2, 0.4, 0.5, 0.6, 0.7]:
+                                # save best parameters
+                                model = ImprovedEnhancedTransformNet(input_dim, output_dim, dropout_rate=dropout_rate).to(device)
+                                train_losses, val_losses = train_improved_model(model, X_train, Y_train, X_test, Y_test)
+                                plot_model_performance(train_losses, val_losses, dropout_rate)
                             # Make predictions
                             model.eval()
                             with torch.no_grad():
