@@ -96,17 +96,29 @@ class ImprovedEnhancedTransformNet(nn.Module):
         super(ImprovedEnhancedTransformNet, self).__init__()
         self.layer1 = nn.Linear(input_dim, hidden_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.layer2 = nn.Linear(hidden_dim, hidden_dim)
-        self.bn2 = nn.BatchNorm1d(hidden_dim)
-        self.layer2 = nn.Linear(hidden_dim, input_dim)
-        self.bn2 = nn.BatchNorm1d(input_dim)
-        self.output_layer = nn.Linear(input_dim, output_dim)
+
+        self.layer2 = nn.Linear(hidden_dim, hidden_dim * 2)
+        self.bn2 = nn.BatchNorm1d(hidden_dim * 2)
+
+        self.layer3 = nn.Linear(hidden_dim * 2, hidden_dim * 4)
+        self.bn3 = nn.BatchNorm1d(hidden_dim * 4)
+
+        self.layer4 = nn.Linear(hidden_dim * 4, hidden_dim * 2)
+        self.bn4 = nn.BatchNorm1d(hidden_dim * 2)
+
+        self.layer5 = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.bn5 = nn.BatchNorm1d(hidden_dim)
+
+        self.output_layer = nn.Linear(hidden_dim, output_dim)
         self.dropout = nn.Dropout(dropout_rate)
         self.activation = nn.ReLU()
 
     def forward(self, x):
         x = self.dropout(self.activation(self.bn1(self.layer1(x))))
         x = self.dropout(self.activation(self.bn2(self.layer2(x))))
+        x = self.dropout(self.activation(self.bn3(self.layer3(x))))
+        x = self.dropout(self.activation(self.bn4(self.layer4(x))))
+        x = self.dropout(self.activation(self.bn5(self.layer5(x))))
         return self.output_layer(x)
     def get_transform_matrix(self):
         return self.output_layer.weight.detach().cpu().numpy()
@@ -220,7 +232,7 @@ def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, bes
     elif model_name == 'LinearTransformNet':
         model = LinearTransformNet(input_dim, output_dim).to(device)
     elif model_name == 'ImprovedEnhancedTransformNet':
-        model = ImprovedEnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim']).to(device)
+        model = ImprovedEnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim'], 0.4).to(device)
     model, train_losses, val_losses, val_outputs = train_improved_model(model, X_train, Y_train, X_test, Y_test,
                                                     epochs=best_params['epochs'], lr=best_params['lr'])
     return model, train_losses, val_losses, val_outputs
@@ -746,8 +758,8 @@ def main():
                         if args.train_linear_transform:
                             model_name = 'ImprovedEnhancedTransformNet'
                             path_to_best_params = fr"{project_folder}/results/best_params_{model_name}.json"
-                            # best_params = load_best_params(path_to_best_params)
-                            best_params = None
+                            best_params = load_best_params(path_to_best_params)
+                            # best_params = None
                             if best_params is None:
                                 print("Best parameters not found. Running hyperparameter tuning...")
                                 best_params = tune_hyperparameters(X_train, Y_train, input_dim, output_dim,
