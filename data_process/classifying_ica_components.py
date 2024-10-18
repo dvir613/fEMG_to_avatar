@@ -212,7 +212,7 @@ def plot_heatmap_classification(order_electrode, participant_folder, session_fol
     fig2.subplots_adjust(hspace=0, wspace=0.001)
     for i in range(len(axs2)):
         if i < n:
-            image = centroids_lst[i].reshape(721, 572).copy()
+            image = centroids_lst[i].reshape(height, width).copy()
             image[image == 0] = np.nan
             axs2[i].imshow(image_paul, cmap='gray')
             axs2[i].pcolormesh(image, cmap='jet', alpha=0.5)
@@ -248,6 +248,7 @@ def classify_participant_components_using_atlas(participant_data, new_data_path,
                                                 participant_ID, session_folder_path, session_number, threshold,
                                                 wavelet, experinment_part_name,
                                                 image_path):
+    image, height, width = image_load(image_path)
     ica_electrode_order = [0 for i in range(16)]
     flags_list = [False for i in range(17)]
     min_dist_list = [0 for i in range(17)]
@@ -255,7 +256,7 @@ def classify_participant_components_using_atlas(participant_data, new_data_path,
     for i in range(len(participant_data)):
         dist_from_centroids = []
         for centroid in centroids_lst[:-1]:
-            centroid = centroid.reshape(721, 572)
+            centroid = centroid.reshape(height, width)
             dist = np.linalg.norm(participant_data[i, :] - centroid)
             dist_from_centroids.append(dist)
         # find distance from closest centroid (out of the 16 real clusters)
@@ -296,10 +297,12 @@ if __name__ == '__main__':
     # Define the project folder by going up two levels from the script's directory
     project_folder = os.path.abspath(os.path.join(script_dir, '..'))
 
-    x_coor = [377, 252, 224, 300, 307, 232, 301, 371, 448, 327, 263, 252, 345, 437, 446, 520]
-    y_coor = [615, 570, 479, 532, 481, 430, 425, 448, 405, 394, 368, 299, 214, 206, 139, 150]
     atlas_folder = os.path.join(script_dir, 'atlas')
-    image_path = fr"{atlas_folder}/Paul_45_2_cropped.jpg"  # path to the image of the face to show the heatmaps on
+    image_path = os.path.join(project_folder, 'side.jpg')    # path to the image of the face to show the heatmaps on
+    x_coor_path = os.path.join(atlas_folder, 'side_x_coor.npy')
+    y_coor_path = os.path.join(atlas_folder, 'side_y_coor.npy')
+    x_coor = np.load(x_coor_path)
+    y_coor = np.load(y_coor_path)
     wavelet = 'db15'
     n = 17
     model_name = 'improved-kmeans'
@@ -321,7 +324,7 @@ if __name__ == '__main__':
             session_folder_path = fr'{participant_folder_path}\{session_folder}'
             edf_files_lst = []
             for file in os.listdir(session_folder_path):
-                if file.endswith('.edf'):
+                if file.endswith('edited.edf'):
                     edf_files_lst.append(fr'{session_folder_path}\{file}')
                     # edf_files_lst.append(fr'{participant_folder_path}\{file}')
                 else:
