@@ -3,9 +3,11 @@ from XtrRT.data import Data
 from moviepy.editor import VideoFileClip
 from datetime import datetime
 import time
+import pygame
+from pygame.locals import QUIT
 
 
-def play_videos(directory, data):
+def play_videos(directory, data, trial_number):
     # Get all files in the directory
     video_files = [f for f in os.listdir(directory) if f.endswith('.mp4')]
 
@@ -15,8 +17,11 @@ def play_videos(directory, data):
     # Loop through each video file
     for video_file in video_files:
         video_path = os.path.join(directory, video_file)
+        # TODO: Remove this line
+        if video_path != r'experiment videos\03_Face_at_rest.mp4':
+            continue
         annotation = video_file.split('.')[0]
-        data.add_annotation(annotation)
+        data.add_annotation(annotation + f"_trial_{trial_number}")
 
         print(f"Now playing: {annotation}")
 
@@ -30,23 +35,70 @@ def play_videos(directory, data):
         time.sleep(2)  # Delay in seconds (e.g., 2 seconds)
 
 
+def free_behavior():
+    # write on the screen: "free behavior"
+    data.add_annotation("free_behavior")
+    # Initialize Pygame
+    pygame.init()
+    # Set up the display
+    screen = pygame.display.set_mode((800, 600))
+    pygame.display.set_caption("Experiment Display")
+    # Set up the font
+    font = pygame.font.Font(None, 64)
+    # Render the text
+    text = font.render("free behavior", True, (255, 255, 255))
+    text_rect = text.get_rect(center=(400, 300))
+    # Get the current time
+    start_time = time.time()
+    # Main loop
+    # TODO: chnage the time to 120 seconds
+    while time.time() - start_time < 2:  # Run for 2 minutes (120 seconds)
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                sys.exit()
+
+        screen.fill((0, 0, 0))  # Fill the screen with black
+        screen.blit(text, text_rect)
+        pygame.display.flip()
+    # Clean up Pygame
+    pygame.quit()
+    data.add_annotation("finished_free_behavior")
+
+
+
 if __name__ == '__main__':
 
     host_name = "127.0.0.1"
+
+    data_path = r"C:\Users\YH006_new\fEMG_to_avatar\data"
+    participant_ID = "participant_03"
+    session_number = 1
+    participant_folder = os.path.join(data_path, participant_ID)
+    session_folder = os.path.join(participant_folder, f"S{session_number}")
+    if not os.path.exists(participant_folder):
+        os.makedirs(participant_folder)
+    if not os.path.exists(session_folder):
+        os.makedirs(session_folder)
+    edf_file_path = os.path.join(session_folder, f"{participant_ID}_S{session_number}.edf")
+
     port = 20001
     n_bytes = 1024
-    data = Data(host_name, port, verbose=False, timeout_secs=15, save_as="test.edf")
+    data = Data(host_name, port, verbose=False, timeout_secs=15, save_as=edf_file_path)
     data.start()
 
     data.add_annotation("Start recording")
-
+    # TODO: change it to range(1, 4)
     directory = 'experiment videos'
-    play_videos(directory, data)
+    for trial_number in range(1, 2):
+        play_videos(directory, data, str(trial_number))
 
-    data.add_annotation("data.start_time: " + str(data.start_time))
+    free_behavior()
 
-    data.add_annotation("Stop recording")
+    data.add_annotation("data_start_time: " + str(data.start_time))
+
+    data.add_annotation("stop_recording")
     data.stop()
 
     print(data.annotations)
-    print('process terminated')
+    print('process_terminated')
