@@ -17,9 +17,18 @@ def play_videos(directory, data, trial_number):
     # Loop through each video file
     for video_file in video_files:
         video_path = os.path.join(directory, video_file)
-        # TODO: Remove this line
-        if video_path != r'experiment videos\03_Face_at_rest.mp4':
+        # TODO remove the following lines
+        if '02_Introduction' in video_file:
             continue
+        if '01_Info' in video_file:
+            continue
+        if '37_Credits' in video_file:
+            continue
+        if '36_Natural_smile' in video_file:
+            continue
+        if 'demonstration' in video_file:
+            continue
+
         annotation = video_file.split('.')[0]
         data.add_annotation(annotation + f"_trial_{trial_number}")
 
@@ -31,8 +40,6 @@ def play_videos(directory, data, trial_number):
         # Play the video
         clip.preview()
 
-        # Optionally, you can add a delay between videos
-        time.sleep(2)  # Delay in seconds (e.g., 2 seconds)
 
 
 def free_behavior():
@@ -51,8 +58,7 @@ def free_behavior():
     # Get the current time
     start_time = time.time()
     # Main loop
-    # TODO: chnage the time to 120 seconds
-    while time.time() - start_time < 2:  # Run for 2 minutes (120 seconds)
+    while time.time() - start_time < 120:  # Run for 2 minutes (120 seconds)
         for event in pygame.event.get():
             if event.type == QUIT:
                 pygame.quit()
@@ -73,7 +79,7 @@ if __name__ == '__main__':
 
     data_path = r"C:\Users\YH006_new\fEMG_to_avatar\data"
     participant_ID = "participant_03"
-    session_number = 1
+    session_number = 2
     participant_folder = os.path.join(data_path, participant_ID)
     session_folder = os.path.join(participant_folder, f"S{session_number}")
     if not os.path.exists(participant_folder):
@@ -88,9 +94,8 @@ if __name__ == '__main__':
     data.start()
 
     data.add_annotation("Start recording")
-    # TODO: change it to range(1, 4)
     directory = 'experiment videos'
-    for trial_number in range(1, 2):
+    for trial_number in range(1, 4):
         play_videos(directory, data, str(trial_number))
 
     free_behavior()
