@@ -15,7 +15,7 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split, cross_val_predict, KFold
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, LogisticRegression
-from sklearn.metrics import mean_squared_error,  r2_score, mean_absolute_error
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.impute import SimpleImputer
 from sklearn.svm import SVR
 from sklearn.ensemble import ExtraTreesRegressor
@@ -30,7 +30,6 @@ from torch.utils.data import DataLoader, TensorDataset
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-
 from prepare_data_for_model import *
 
 torch.manual_seed(42)
@@ -39,7 +38,6 @@ np.random.seed(42)
 # Check if CUDA is available and set the device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
-
 
 # Get the absolute path of the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -58,6 +56,7 @@ train_autoencoder = True
 criterion = 'mse'
 segments_length = 4  # length of each segment in seconds
 models = ['LR', 'ETR', 'Ridge', 'Lasso', 'ElasticNet', 'DecisionTreeRegressor', 'RandomForestRegressor']
+
 
 # Define a neural network model for the linear transformation
 class LinearTransformNet(nn.Module):
@@ -91,6 +90,7 @@ class EnhancedTransformNet(nn.Module):
         x = self.activation(self.layer2(x))
         return self.output_layer(x)
 
+
 class ImprovedEnhancedTransformNet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden_dim=64, dropout_rate=0.4):
         super(ImprovedEnhancedTransformNet, self).__init__()
@@ -123,15 +123,14 @@ class ImprovedEnhancedTransformNet(nn.Module):
     def get_transform_matrix(self):
         return self.output_layer.weight.detach().cpu().numpy()
 
-def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0.01, patience=10):
-    criterion = nn.MSELoss()
+
+def train_improved_model(model, X_train, Y_train, X_val, Y_val, criterion, Early_stopping, epochs=100, lr=0.01, patience=10):
+    if criterion == 'mse':
+        criterion = nn.MSELoss()
+    elif criterion == 'pearson':
+        criterion = pearson_correlation_loss
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)  # Added L2 regularization
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
-    # shuffle training set
-    indices = np.arange(X_train.shape[0])
-    np.random.shuffle(indices)
-    X_train = X_train[indices]
-    Y_train = Y_train[indices]
 
     train_losses = []
     val_losses = []
@@ -139,11 +138,15 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0
     epochs_no_improve = 0
 
     for epoch in range(epochs):
+        # Shuffle the training data
+        indices = torch.randperm(X_train.size(0))
+        X_train_shuffled = X_train[indices]
+        Y_train_shuffled = Y_train[indices]
+
         model.train()
         optimizer.zero_grad()
-        outputs = model(X_train)
-        loss = pearson_correlation_loss(outputs, Y_train)
-        # loss = criterion(outputs, Y_train)
+        outputs = model(X_train_shuffled)
+        loss = criterion(outputs, Y_train_shuffled)
         loss.backward()
         optimizer.step()
         train_losses.append(loss.item())
@@ -151,8 +154,7 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, epochs=100, lr=0
         model.eval()
         with torch.no_grad():
             val_outputs = model(X_val)
-            # val_loss = criterion(val_outputs, Y_val)
-            val_loss = pearson_correlation_loss(val_outputs, Y_val)
+            val_loss = criterion(val_outputs, Y_val)
             val_losses.append(val_loss.item())
 
         scheduler.step(val_loss)
@@ -188,21 +190,25 @@ def load_best_params(filename='best_params.json'):
             return None
     return None
 
+
 def save_best_params(best_params, filename='best_params.json'):
     with open(filename, 'w') as f:
         json.dump(best_params, f)
 
 
-def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[50, 100, 200, 300, 400, 500],
-                         lr_list=[0.001, 0.01, 0.1], hidden_dim_list=[32, 64, 128], filename='best_params.json', model_name='EnhancedTransformNet'):
+def tune_hyperparameters(X, Y, input_dim, output_dim, criterion, n_splits=5, epochs_list=[50, 100, 200, 300, 400, 500],
+                         lr_list=[0.001, 0.01, 0.1], hidden_dim_list=[32, 64, 128], filename='best_params.json',
+                         model_name='EnhancedTransformNet'):
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     best_params = None
     best_score = float('inf')
+    best_losses = []
 
     for epochs in epochs_list:
         for lr in lr_list:
             for hidden_dim in hidden_dim_list:
                 scores = []
+                fold_losses = []
                 for train_index, val_index in kf.split(X):
                     X_train, X_val = X[train_index], X[val_index]
                     Y_train, Y_val = Y[train_index], Y[val_index]
@@ -212,34 +218,56 @@ def tune_hyperparameters(X, Y, input_dim, output_dim, n_splits=5, epochs_list=[5
                         model = LinearTransformNet(input_dim, output_dim).to(device)
                     elif model_name == 'ImprovedEnhancedTransformNet':
                         model = ImprovedEnhancedTransformNet(input_dim, output_dim, hidden_dim).to(device)
-                    _, val_losses = train_model(model, X_train, Y_train, X_val, Y_val, epochs=epochs, lr=lr)
+                    train_losses, val_losses = train_model(model, X_train, Y_train, X_val, Y_val, criterion,
+                                                           epochs=epochs, lr=lr)
                     scores.append(val_losses[-1])
+                    fold_losses.append((train_losses, val_losses))
 
                 avg_score = np.mean(scores)
                 if avg_score < best_score:
                     best_score = avg_score
                     best_params = {'epochs': epochs, 'lr': lr, 'hidden_dim': hidden_dim}
+                    best_losses = fold_losses
 
     print(f"Best parameters: {best_params}")
     print(f"Best validation score: {best_score:.4f}")
     save_best_params(best_params, filename)
-    return best_params
+    return best_params, best_losses
 
 
-def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, best_params, model_name='EnhancedTransformNet'):
+def plot_loss_values(best_losses, best_params, n_splits=5):
+    fig, axes = plt.subplots(n_splits, 1, figsize=(12, 4 * n_splits), sharex=True)
+    fig.suptitle(f"Training and Validation Loss for Best Model\nParameters: {best_params}")
+
+    for i, (train_losses, val_losses) in enumerate(best_losses):
+        ax = axes[i]
+        ax.plot(train_losses, label='Training Loss')
+        ax.plot(val_losses, label='Validation Loss')
+        ax.set_title(f'Fold {i + 1}')
+        ax.set_ylabel('Loss')
+        ax.legend()
+
+    axes[-1].set_xlabel('Epochs')
+    plt.tight_layout()
+    plt.show()
+
+
+def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, best_params, criterion, Early_stopping,
+                    model_name='EnhancedTransformNet'):
     if model_name == 'EnhancedTransformNet':
         model = EnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim']).to(device)
     elif model_name == 'LinearTransformNet':
         model = LinearTransformNet(input_dim, output_dim).to(device)
     elif model_name == 'ImprovedEnhancedTransformNet':
         model = ImprovedEnhancedTransformNet(input_dim, output_dim, best_params['hidden_dim'], 0.4).to(device)
-    model, train_losses, val_losses, val_outputs = train_improved_model(model, X_train, Y_train, X_test, Y_test,
-                                                    epochs=best_params['epochs'], lr=best_params['lr'])
+    model, train_losses, val_losses, val_outputs = train_improved_model(model, X_train, Y_train, X_test, Y_test, criterion,
+                                                                        Early_stopping, epochs=best_params['epochs'],
+                                                                        lr=best_params['lr'])
     return model, train_losses, val_losses, val_outputs
 
 
 def plot_model_performance(train_losses, test_losses, dropout_rate=None):
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(10, 10))
     plt.plot(train_losses, label='Training Loss')
     plt.plot(test_losses, label='Test Loss')
     plt.xlabel('Epochs')
@@ -252,8 +280,11 @@ def plot_model_performance(train_losses, test_losses, dropout_rate=None):
     plt.show()
 
 
-def train_model(model, X_train, Y_train, X_test, Y_test, epochs=100, lr=0.01):
-    criterion = nn.MSELoss()
+def train_model(model, X_train, Y_train, X_test, Y_test, criterion, epochs=100, lr=0.01, device='cuda'):
+    if criterion == 'mse':
+        criterion = nn.MSELoss()
+    elif criterion == 'pearson':
+        criterion = pearson_correlation_loss
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     train_losses = []
@@ -266,12 +297,16 @@ def train_model(model, X_train, Y_train, X_test, Y_test, epochs=100, lr=0.01):
     Y_test = Y_test.to(device)
 
     for epoch in range(epochs):
+        # Shuffle the training data
+        indices = torch.randperm(X_train.size(0))
+        X_train_shuffled = X_train[indices]
+        Y_train_shuffled = Y_train[indices]
+
         # Training
         model.train()
         optimizer.zero_grad()
-        outputs = model(X_train)
-        # loss = pearson_correlation_loss(outputs, Y_train)
-        loss = criterion(outputs, Y_train)
+        outputs = model(X_train_shuffled)
+        loss = criterion(outputs, Y_train_shuffled)
         loss.backward()
         optimizer.step()
         train_losses.append(loss.item())
@@ -281,7 +316,6 @@ def train_model(model, X_train, Y_train, X_test, Y_test, epochs=100, lr=0.01):
         with torch.no_grad():
             test_outputs = model(X_test)
             test_loss = criterion(test_outputs, Y_test)
-            # test_loss = pearson_correlation_loss(test_outputs, Y_test)
             test_losses.append(test_loss.item())
 
         if (epoch + 1) % 100 == 0:
@@ -352,8 +386,6 @@ class SimpleAutoencoder(nn.Module):
 #             print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss.item():.4f}')
 #
 #     return train_losses, test_losses
-
-
 
 
 def pearson_correlation_loss(y_pred, y_true):
@@ -444,9 +476,8 @@ def train_and_evaluate_best_model(model, X_train, X_test, criterion, best_batch_
     return model, final_test_outputs
 
 
-
-
-def train_autoencoder_cv(model, X, criterion, epochs=100, n_splits=5, tune_parameter='batch_size', default_batch_size=32, default_lr=0.001):
+def train_autoencoder_cv(model, X, criterion, epochs=100, n_splits=5, tune_parameter='batch_size',
+                         default_batch_size=32, default_lr=0.001):
     kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
     best_model = None
@@ -527,8 +558,11 @@ def train_autoencoder_cv(model, X, criterion, epochs=100, n_splits=5, tune_param
 
 
 performance_results = []
+
+
 # Function to evaluate models and print results
-def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cross_val=True, plot_weights=True, is_ICA=True):
+def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cross_val=True, plot_weights=True,
+                    is_ICA=True):
     print(f"\nEvaluating {model_name} for {data_label} data...")
 
     # # Use LazyPredict to evaluate multiple models
@@ -602,14 +636,15 @@ def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cr
         weights_ordered = weights[ordered_indices, :]
 
         plt.figure(figsize=(12, 8))
-        sns.heatmap(weights_ordered, annot=True, cmap='coolwarm', vmin=-0.5, vmax=0.5, xticklabels=range(1, X_train.shape[1] + 1),
+        sns.heatmap(weights_ordered, annot=True, cmap='coolwarm', vmin=-0.5, vmax=0.5,
+                    xticklabels=range(1, X_train.shape[1] + 1),
                     yticklabels=ordered_blendshapes)
         plt.xlabel('ICs')
         plt.ylabel('blendshapes')
         plt.title(f'Weight Matrix for {data_label} data')
         plt.show()
 
-    #     save the weights matrix
+        #     save the weights matrix
         if os.path.exists(fr"{project_folder}\results") is False:
             os.makedirs(fr"{project_folder}\results")
         weights_path = fr"{project_folder}\results\{participant_folder}_{session_folder}_{model_name}_weights_{data_label}.npy"
@@ -632,6 +667,8 @@ def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cr
     performance_results.append(performance)
 
     return model, mse, r2, mae, Y_pred
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
     parser.add_argument("--data_path", default=f"C:/Users/YH006_new/fEMG_to_avatar/data", help="Path to data directory")
@@ -639,15 +676,24 @@ def main():
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
-    parser.add_argument("--build_individual_models", action="store_true", default=True, help="Build individual models flag")
-    parser.add_argument("--train_deep_learning_model", action="store_true", default=True, help="Train deep learning model flag")
+    parser.add_argument("--train_deep_learning_model", action="store_true", default=True,
+                        help="Train deep learning model flag")
     parser.add_argument("--tune_autoencoder", action="store_true", default=False, help="Tune autoencoder flag")
-    parser.add_argument("--train_linear_transform", action="store_true", default=True, help="Train linear transform flag")
-    parser.add_argument("--train_enhanced_linear_transform", action="store_true", default=True, help="Train enhanced linear transform flag")
+    parser.add_argument("--train_linear_transform", action="store_true", default=True,
+                        help="Train linear transform flag")
+    parser.add_argument("--train_enhanced_linear_transform", action="store_true", default=True,
+                        help="Train enhanced linear transform flag")
+    parser.add_argument("--model_name", default='ImprovedEnhancedTransformNet', choices=['LinearTransformNet',
+                                                                                 'EnhancedTransformNet',
+                                                                                 'ImprovedEnhancedTransformNet'],
+                        help="Model name")
     parser.add_argument("--train_autoencoder", action="store_true", default=False, help="Train autoencoder flag")
     parser.add_argument("--criterion", default='pearson', choices=['mse', 'pearson'], help="Loss criterion")
+    parser.add_argument("--Early_stopping", action="store_true", default=True, help="Early stopping flag")
     parser.add_argument("--segments_length", type=int, default=4, help="Length of segments in seconds")
-    parser.add_argument("--models", nargs='+', default=['LR', 'ETR', 'Ridge', 'Lasso', 'ElasticNet', 'DecisionTreeRegressor', 'RandomForestRegressor'], help="Models to evaluate")
+    parser.add_argument("--models", nargs='+',
+                        default=['LR', 'ETR', 'Ridge', 'Lasso', 'ElasticNet', 'DecisionTreeRegressor',
+                                 'RandomForestRegressor'], help="Models to evaluate")
 
     args = parser.parse_args()
 
@@ -656,337 +702,248 @@ def main():
     print(f"Using device: {device}")
 
     performance_results = []
-
-    if args.build_individual_models:
-        for participant_folder in os.listdir(args.data_path):
-            if participant_folder == 'participant_01':
+    for participant_folder in os.listdir(args.data_path):
+        if not participant_folder == 'participant_02':
+            continue
+        if 'csv' in participant_folder:
+            continue
+        participant_ID = participant_folder
+        participant_folder_path = os.path.join(args.data_path, participant_folder)
+        for session_folder in os.listdir(participant_folder_path):
+            if session_folder == 'S1':
                 continue
-            if 'csv' in participant_folder:
-                continue
-            participant_ID = participant_folder
-            participant_folder_path = os.path.join(args.data_path, participant_folder)
-            for session_folder in os.listdir(participant_folder_path):
-                if session_folder == 'S1':
-                    continue
-                session_folder_path = os.path.join(participant_folder_path, session_folder)
-                session_number = session_folder
+            session_folder_path = os.path.join(participant_folder_path, session_folder)
+            session_number = session_folder
 
-                # Run for both ICA and EMG configurations
-                for config in ['ICA']:
-                    print(f"\nRunning {config} configuration for {participant_ID}, session {session_number}")
-
-                    # Load and prepare data (existing code)
-                    ica_after_order = extract_and_order_ica_data(participant_ID, session_folder_path, session_number)
-                    edf_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_edited.edf")
-                    emg_file = mne.io.read_raw_edf(edf_path, preload=True)
-                    emg_fs = emg_file.info['sfreq']
-
-                    if args.ica_flag:
-                        X_full = ica_after_order
-                    elif args.emg_flag:
-                        X_full = emg_file.get_data()
-                        X_full = filter_signal(X_full, emg_fs)
-
-
-                    # Prepare data for model (existing code)
-                    annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
-                                        '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
-                    # print all the annotations that contains the strings in annotations_list
-                    annotations_list_with_start_end = []
-                    for annotation in emg_file.annotations.description:
-                        for name in annotations_list:
-                    #         if annotation contains the name, append the annotation to the list
-                            if name in annotation:
-                                annotations_list_with_start_end.append(annotation)
-                    for annotation in annotations_list_with_start_end:
-                        if annotation in annotations_list:
-                    #         delete the annotation from the list
-                            annotations_list_with_start_end.remove(annotation)
-                    events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
-                    # make events_timings into a list with 10 lists that each contains the start and end of the annotation
-                    events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
-
-                    if args.ica_flag:
-                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs, events_timings, False,
-                                                                                                events_timings=events_timings,
-                                                                                                segments_length=args.segments_length, norm="ICA",
-                                                                                                averaging="RMS")
-                    elif args.emg_flag:
-                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(X_full, emg_file, emg_fs, events_timings, False,
-                                                                                                events_timings=events_timings,
-                                                                                                segments_length=args.segments_length, norm="ICA",
-                                                                                                averaging="RMS")
-                    # Load avatar data (existing code)
-                    avatar_data = pd.read_csv(os.path.join(session_folder_path, f"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv"),
-                                              header=0, index_col=0)
-                    blendshapes = avatar_data.columns
-                    relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file,
-                                                                                                 relevant_data_train_emg, relevant_data_test_emg,
-                                                                                                 events_timings, False, rand_lst,
-                                                                                                 fs=60, events_timings=events_timings,
-                                                                                                 segments_length=args.segments_length, norm=None,
-                                                                                                 averaging="RMS")
-                    # plot ICA components vs avatar blendshapes
-                    # plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, emg_fs,
-                    #                         participant_ID,
-                    #                         session_number)
-                    X_train = relevant_data_train_emg.T
-                    X_test = relevant_data_test_emg.T
-                    Y_train = relevant_data_train_avatar.T
-                    Y_test = relevant_data_test_avatar.T
-
-                    # # Standardize the features
-                    scaler_X = StandardScaler()
-                    scaler_Y = StandardScaler()
-
-                    X_train = scaler_X.fit_transform(X_train)
-                    X_test = scaler_X.transform(X_test)
-                    Y_train = scaler_Y.fit_transform(Y_train)
-                    Y_test = scaler_Y.transform(Y_test)
-
-                    if args.train_deep_learning_model:
-                        # Convert to PyTorch tensors and move to the selected device
-                        X_train = torch.FloatTensor(X_train).to(device)
-                        X_test = torch.FloatTensor(X_test).to(device)
-                        Y_train = torch.FloatTensor(Y_train).to(device)
-                        Y_test = torch.FloatTensor(Y_test).to(device)
-
-                        # Initialize the model and move it to the selected device
-                        input_dim = X_train.shape[1]
-                        output_dim = Y_train.shape[1]
-
-                        if args.train_linear_transform:
-                            model_name = 'ImprovedEnhancedTransformNet'
-                            path_to_best_params = fr"{project_folder}/results/best_params_{model_name}.json"
-                            best_params = load_best_params(path_to_best_params)
-                            # best_params = None
-                            if best_params is None:
-                                print("Best parameters not found. Running hyperparameter tuning...")
-                                best_params = tune_hyperparameters(X_train, Y_train, input_dim, output_dim,
-                                                                   filename=path_to_best_params,
-                                                                   model_name='ImprovedEnhancedTransformNet')
-
-                            else:
-                                print("Loaded best parameters:", best_params)
-                            best_model, train_losses, test_losses, Y_pred = test_best_model(X_train, Y_train, X_test,
-                                                                                    Y_test,
-                                                                                    input_dim, output_dim,
-                                                                                    best_params,
-                                                                                    model_name=
-                                                                                    'ImprovedEnhancedTransformNet')
-                            plot_model_performance(train_losses, test_losses)
-                            #    save the model
-                            model_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_{model_name}_{config}.joblib")
-                            joblib.dump(best_model, model_path)
-                            print(f"Model {model_name} for {config} saved as {model_path}")
-
-                            # Move predictions back to CPU for further processing
-                            Y_pred = Y_pred.cpu().numpy()
-
-                            if args.save_results:
-                                # perform the inverse transformation to get the original values
-                                Y_pred = scaler_Y.inverse_transform(Y_pred)
-                                pred_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
-                                pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
-                                print(f"Predicted data saved as {pred_path}")
-
-                        if args.train_autoencoder:
-                            print("Training Autoencoder Model...")
-                            encoding_dim = output_dim  # You can adjust this
-
-                            autoencoder = SimpleAutoencoder(input_dim, encoding_dim)
-
-                            if args.tune_autoencoder:
-                                # To tune batch size
-                                _, best_batch_size, _ = train_autoencoder_cv(autoencoder, X_train.cpu().numpy(), args.criterion, tune_parameter='batch_size')
-
-                                # To tune learning rate
-                                _, _, best_lr = train_autoencoder_cv(autoencoder, X_train.cpu().numpy(), args.criterion, tune_parameter='learning_rate')
-                            else:
-                                best_batch_size = 16
-                                best_lr = 0.01
-                            print(f"Best batch size: {best_batch_size}, Best learning rate: {best_lr}")
-                            # Train the best model
-                            autoencoder, Y_pred = train_and_evaluate_best_model(autoencoder, X_train, X_test, args.criterion, best_batch_size, best_lr)
-
-                            # make predictions using the autoencoder
-                            autoencoder.eval()
-                            with torch.no_grad():
-                                Y_pred = autoencoder.encoder(X_test)
-
-                            # Move predictions back to CPU for further processing
-                            Y_pred = Y_pred.cpu().numpy()
-
-                            # Save the autoencoder model
-                            if args.save_results:
-                                model_name = 'Autoencoder'
-                                # perform the inverse transformation to get the original values
-                                Y_pred = scaler_Y.inverse_transform(Y_pred)
-                                pred_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
-                                pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
-                                model_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib")
-                                joblib.dump(autoencoder, model_path)
-                                print(f"Model {model_name} for {config} saved as {model_path}")
-
-                    else:
-                        # Run models
-                        for model_name in args.models:
-                            model_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib")
-
-                            if args.emg_flag:
-                                model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
-                                                                              model_name, f'{participant_ID} {session_number} {config}',
-                                                                              is_ICA=False)
-                            else:
-                                model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
-                                                                              model_name, f'{participant_ID} {session_number} {config}',
-                                                                              is_ICA=True)
-
-                            if args.save_results:
-                                # perform the inverse transformation to get the original values
-                                Y_pred = scaler_Y.inverse_transform(Y_pred)
-                                pred_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
-                                pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
-                                print(f"Predicted data saved as {pred_path}")
-
-                                # Save model
-                                joblib.dump(model, model_path)
-                                print(f"Model {model_name} for {config} saved as {model_path}")
-
-                        # After running both configurations, save performance results
-                        performance_df = pd.DataFrame(performance_results)
-                        performance_csv_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_model_performance_comparison.csv")
-                        performance_df.to_csv(performance_csv_path, index=False)
-                        print(f"Model performance comparison results saved to {performance_csv_path}")
-
-                        # Reset performance_results for the next session
-                        performance_results = []
-
-                    plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list, test_data_timing)
-                    # convert the test values to the original scale
-                    Y_test = relevant_data_test_avatar.T
-                    # Save avatar data (existing code)
-                    avatar_sliding_window_method = "RMS"
-                    pd.DataFrame(Y_test, columns=blendshapes).to_csv(
-                        os.path.join(session_folder_path, f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv"))
-                    print("Avatar data saved as CSV file.\n")
-
-    else:
-        data_path = fr"{project_folder}\data"
-
-        # Initialize empty lists to store combined data
-        X_train_combined = []
-        X_test_combined = []
-        Y_train_combined = []
-        Y_test_combined = []
-
-        # Loop through all participants and sessions to collect data
-        for participant_folder in os.listdir(data_path):
-            participant_ID = participant_folder
-            participant_folder_path = fr'{data_path}\{participant_folder}'
-            for session_folder in os.listdir(participant_folder_path):
-                session_folder_path = fr'{participant_folder_path}\{session_folder}'
-                session_number = session_folder
-
-                print(f"\nProcessing data for {participant_ID}, session {session_number}")
+            # Run for both ICA and EMG configurations
+            for config in ['ICA']:
+                print(f"\nRunning {config} configuration for {participant_ID}, session {session_number}")
 
                 # Load and prepare data (existing code)
                 ica_after_order = extract_and_order_ica_data(participant_ID, session_folder_path, session_number)
-                edf_path = fr"{session_folder_path}\{participant_ID}_{session_number}_edited.edf"
+                edf_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_edited.edf")
                 emg_file = mne.io.read_raw_edf(edf_path, preload=True)
                 emg_fs = emg_file.info['sfreq']
 
-                X_full = ica_after_order
-                X_full = normalize_ica_data(X_full)
-                X_full_RMS = sliding_window(X_full, method="RMS", fs=emg_fs).T
+                if args.ica_flag:
+                    X_full = ica_after_order
+                elif args.emg_flag:
+                    X_full = emg_file.get_data()
+                    X_full = filter_signal(X_full, emg_fs)
 
                 # Prepare data for model (existing code)
                 annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
                                     '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
-                events_timings = get_annotations_timings(emg_file, annotations_list)
-                trials_lst = [[2, 8, 16], [3, 8, 17], [4, 10, 18], [2, 8, 14], [2, 9, 17], [2, 6, 13], [2, 8, 14],
-                              [2, 9, 17], [2, 6, 11], [2, 9, 15]]
-                trials_lst_timing = [[] for i in range(len(trials_lst))]
-                for i in range(len(trials_lst)):
-                    for j in range(len(trials_lst[0])):
-                        trials_lst_timing[i].append(round(events_timings[i] + trials_lst[i][j]))
+                # print all the annotations that contains the strings in annotations_list
+                annotations_list_with_start_end = []
+                for annotation in emg_file.annotations.description:
+                    for name in annotations_list:
+                        #         if annotation contains the name, append the annotation to the list
+                        if name in annotation:
+                            annotations_list_with_start_end.append(annotation)
+                for annotation in annotations_list_with_start_end:
+                    if annotation in annotations_list:
+                        #         delete the annotation from the list
+                        annotations_list_with_start_end.remove(annotation)
+                events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
+                # make events_timings into a list with 10 lists that each contains the start and end of the annotation
+                events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
-                relevant_data_train_emg, relevant_data_test_emg, rand_lst = prepare_relevant_data_new(ica_after_order, emg_file, emg_fs,
-                                                                                        trials_lst_timing, rand_lst,
-                                                                                        events_timings=events_timings,
-                                                                                        segments_length=4, norm="ICA",
-                                                                                        averaging="RMS")
-
+                if args.ica_flag:
+                    relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
+                        ica_after_order, emg_file, emg_fs, events_timings, False,
+                        events_timings=events_timings,
+                        segments_length=args.segments_length, norm="ICA",
+                        averaging="RMS")
+                elif args.emg_flag:
+                    relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
+                        X_full, emg_file, emg_fs, events_timings, False,
+                        events_timings=events_timings,
+                        segments_length=args.segments_length, norm="ICA",
+                        averaging="RMS")
                 # Load avatar data (existing code)
-                avatar_data = pd.read_csv(fr"{session_folder_path}/"
-                                          fr"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv",
+                avatar_data = pd.read_csv(os.path.join(session_folder_path,
+                                                       f"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv"),
                                           header=0, index_col=0)
                 blendshapes = avatar_data.columns
                 relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID,
-                                                                                                     avatar_data, emg_file,
+                                                                                                     avatar_data,
+                                                                                                     emg_file,
                                                                                                      relevant_data_train_emg,
                                                                                                      relevant_data_test_emg,
-                                                                                                     trials_lst_timing,
+                                                                                                     events_timings,
+                                                                                                     False, rand_lst,
                                                                                                      fs=60,
                                                                                                      events_timings=events_timings,
-                                                                                                     segments_length=4,
+                                                                                                     segments_length=args.segments_length,
                                                                                                      norm=None,
-                                                                                                     averaging="MEAN")
+                                                                                                     averaging="RMS")
+                # plot ICA components vs avatar blendshapes
+                plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 1,
+                                        participant_ID,
+                                        session_number)
+                X_train = relevant_data_train_emg.T
+                X_test = relevant_data_test_emg.T
+                Y_train = relevant_data_train_avatar.T
+                Y_test = relevant_data_test_avatar.T
 
-                # Append data to combined lists
-                X_train_combined.append(relevant_data_train_emg.T)
-                X_test_combined.append(relevant_data_test_emg.T)
-                Y_train_combined.append(relevant_data_train_avatar.T)
-                Y_test_combined.append(relevant_data_test_avatar.T)
+                # # Standardize the features
+                scaler_X = StandardScaler()
+                scaler_Y = StandardScaler()
 
-        # Combine data from all participants
-        X_train = np.vstack(X_train_combined)
-        X_test = np.vstack(X_test_combined)
-        Y_train = np.vstack(Y_train_combined)
-        Y_test = np.vstack(Y_test_combined)
+                X_train = scaler_X.fit_transform(X_train)
+                X_test = scaler_X.transform(X_test)
+                Y_train = scaler_Y.fit_transform(Y_train)
+                Y_test = scaler_Y.transform(Y_test)
 
-        print(f"Combined training data shape: {X_train.shape}")
-        print(f"Combined testing data shape: {X_test.shape}")
+                if args.train_deep_learning_model:
+                    # Convert to PyTorch tensors and move to the selected device
+                    X_train = torch.FloatTensor(X_train).to(device)
+                    X_test = torch.FloatTensor(X_test).to(device)
+                    Y_train = torch.FloatTensor(Y_train).to(device)
+                    Y_test = torch.FloatTensor(Y_test).to(device)
 
-        # Run models on combined data
-        for model_name in models:
-            print(f"\nTraining and evaluating {model_name} on combined participant data")
-            model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
-                                                          model_name, "Combined Participants ICA",
-                                                          is_ICA=True)
+                    # Initialize the model and move it to the selected device
+                    input_dim = X_train.shape[1]
+                    output_dim = Y_train.shape[1]
 
-            # Save combined model
-            if os.path.exists(fr"{project_folder}\models") is False:
-                os.makedirs(fr"{project_folder}\models")
-            model_path = fr"{project_folder}\models\combined_{model_name}_ICA.joblib"
-            joblib.dump(model, model_path)
-            print(f"Combined model {model_name} for ICA saved as {model_path}")
-
-            # Save predictions
-            if os.path.exists(fr"{project_folder}\predictions") is False:
-                os.makedirs(fr"{project_folder}\predictions")
-            pred_path = fr"{project_folder}\predictions\combined_predicted_blendshapes_{model_name}_ICA.csv"
-            pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
-            print(f"Combined predictions saved as {pred_path}")
-
-        # Save performance results
-        performance_df = pd.DataFrame(performance_results)
-        if os.path.exists(fr"{project_folder}\results") is False:
-            os.makedirs(fr"{project_folder}\results")
-        performance_csv_path = fr"{project_folder}\results\combined_model_performance_comparison.csv"
-        performance_df.to_csv(performance_csv_path, index=False)
-        print(f"Combined model performance comparison results saved to {performance_csv_path}")
+                    if args.train_linear_transform:
+                        model_name = args.model_name
+                        path_to_best_params = fr"{project_folder}/results/best_params_{model_name}.json"
+                        best_params = load_best_params(path_to_best_params)
+                        # best_params = None
+                        if best_params is None:
+                            print("Best parameters not found. Running hyperparameter tuning...")
+                            best_params, best_losses = tune_hyperparameters(X_train, Y_train, input_dim, output_dim,
+                                                                            args.criterion, filename=path_to_best_params,
+                                                                            model_name=model_name)
+                            plot_loss_values(best_losses, best_params)
 
 
-        # Save combined test data
-        pd.DataFrame(Y_test, columns=blendshapes).to_csv(
-            fr"{project_folder}\data\combined_avatar_blendshapes_MEAN.csv")
-        print("Combined avatar test data saved as CSV file.")
+                        else:
+                            print("Loaded best parameters:", best_params)
+                        best_model, train_losses, test_losses, Y_pred = test_best_model(X_train, Y_train, X_test,
+                                                                                        Y_test,
+                                                                                        input_dim, output_dim,
+                                                                                        best_params,
+                                                                                        args.criterion, args.Early_stopping,
+                                                                                        model_name=
+                                                                                        model_name)
+                        plot_model_performance(train_losses, test_losses)
+                        #    save the model
+                        model_path = os.path.join(session_folder_path,
+                                                  f"{participant_ID}_{session_number}_blendshapes_{model_name}_{config}.joblib")
+                        joblib.dump(best_model, model_path)
+                        print(f"Model {model_name} for {config} saved as {model_path}")
+
+                        # Move predictions back to CPU for further processing
+                        Y_pred = Y_pred.cpu().numpy()
+
+                        if args.save_results:
+                            # perform the inverse transformation to get the original values
+                            Y_pred = scaler_Y.inverse_transform(Y_pred)
+                            pred_path = os.path.join(session_folder_path,
+                                                     f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
+                            pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
+                            print(f"Predicted data saved as {pred_path}")
+
+                    if args.train_autoencoder:
+                        print("Training Autoencoder Model...")
+                        encoding_dim = output_dim  # You can adjust this
+
+                        autoencoder = SimpleAutoencoder(input_dim, encoding_dim)
+
+                        if args.tune_autoencoder:
+                            # To tune batch size
+                            _, best_batch_size, _ = train_autoencoder_cv(autoencoder, X_train.cpu().numpy(),
+                                                                         args.criterion, tune_parameter='batch_size')
+
+                            # To tune learning rate
+                            _, _, best_lr = train_autoencoder_cv(autoencoder, X_train.cpu().numpy(), args.criterion,
+                                                                 tune_parameter='learning_rate')
+                        else:
+                            best_batch_size = 16
+                            best_lr = 0.01
+                        print(f"Best batch size: {best_batch_size}, Best learning rate: {best_lr}")
+                        # Train the best model
+                        autoencoder, Y_pred = train_and_evaluate_best_model(autoencoder, X_train, X_test,
+                                                                            args.criterion, best_batch_size, best_lr)
+
+                        # make predictions using the autoencoder
+                        autoencoder.eval()
+                        with torch.no_grad():
+                            Y_pred = autoencoder.encoder(X_test)
+
+                        # Move predictions back to CPU for further processing
+                        Y_pred = Y_pred.cpu().numpy()
+
+                        # Save the autoencoder model
+                        if args.save_results:
+                            model_name = 'Autoencoder'
+                            # perform the inverse transformation to get the original values
+                            Y_pred = scaler_Y.inverse_transform(Y_pred)
+                            pred_path = os.path.join(session_folder_path,
+                                                     f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
+                            pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
+                            model_path = os.path.join(session_folder_path,
+                                                      f"{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib")
+                            joblib.dump(autoencoder, model_path)
+                            print(f"Model {model_name} for {config} saved as {model_path}")
+
+                else:
+                    # Run models
+                    for model_name in args.models:
+                        model_path = os.path.join(session_folder_path,
+                                                  f"{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib")
+
+                        if args.emg_flag:
+                            model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
+                                                                          model_name,
+                                                                          f'{participant_ID} {session_number} {config}',
+                                                                          is_ICA=False)
+                        else:
+                            model, mse, r2, mae, Y_pred = evaluate_models(X_train, X_test, Y_train, Y_test,
+                                                                          model_name,
+                                                                          f'{participant_ID} {session_number} {config}',
+                                                                          is_ICA=True)
+
+                        if args.save_results:
+                            # perform the inverse transformation to get the original values
+                            Y_pred = scaler_Y.inverse_transform(Y_pred)
+                            pred_path = os.path.join(session_folder_path,
+                                                     f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
+                            pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
+                            print(f"Predicted data saved as {pred_path}")
+
+                            # Save model
+                            joblib.dump(model, model_path)
+                            print(f"Model {model_name} for {config} saved as {model_path}")
+
+                    # After running both configurations, save performance results
+                    performance_df = pd.DataFrame(performance_results)
+                    performance_csv_path = os.path.join(session_folder_path,
+                                                        f"{participant_ID}_{session_number}_model_performance_comparison.csv")
+                    performance_df.to_csv(performance_csv_path, index=False)
+                    print(f"Model performance comparison results saved to {performance_csv_path}")
+
+                    # Reset performance_results for the next session
+                    performance_results = []
+
+                plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
+                                           test_data_timing)
+                # convert the test values to the original scale
+                Y_test = relevant_data_test_avatar.T
+                # Save avatar data (existing code)
+                avatar_sliding_window_method = "RMS"
+                pd.DataFrame(Y_test, columns=blendshapes).to_csv(
+                    os.path.join(session_folder_path,
+                                 f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv"))
+                print("Avatar data saved as CSV file.\n")
 
 
 def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, test_data_timing):
     num_plots = len(blendshapes)
-    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24*num_plots//31), dpi=300, sharex=True)
+    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24 * num_plots // 31), dpi=300, sharex=True)
     plt.rcParams.update({'font.size': 20})
 
     # Calculate the overall time range for both EMG and avatar data
@@ -1000,7 +957,7 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
 
     # Process annotations
     annotations_list_edited = [annot[2:].replace("_", " ") for annot in annotations_list]
-    annotation_positions = [sum(int(test_data_timing[j][1] - test_data_timing[j][0])//1.26 for j in range(i)) for i in
+    annotation_positions = [sum(int(test_data_timing[j][1] - test_data_timing[j][0]) // 1.26 for j in range(i)) for i in
                             range(len(test_data_timing))]
     annotation_positions.append(max_time)  # Add the last position
 
@@ -1037,12 +994,8 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
         for pos in annotation_positions[:-1]:
             ax.axvline(x=pos, color='red', linestyle='--', linewidth=0.7, alpha=0.7)
 
-    # Set xticks and labels only for the bottom subplot
-    ax_bottom = axs[-1] if num_plots > 1 else axs
-    ax_bottom.set_xticks(annotation_positions)
-    ax_bottom.set_xticklabels(annotations_list_edited + [" "], rotation=90, ha='center', va='top', fontsize=18)
-    ax_bottom.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True, labelsize=24)
-
+    # Set xticks to be []
+    plt.setp(axs, xticks=[])
     plt.tight_layout(rect=[0.05, 0.03, 1, 0.97])  # Adjust margins
     plt.savefig(fr"{project_folder}\results\predictions_vs_avatar.png")
     plt.close()

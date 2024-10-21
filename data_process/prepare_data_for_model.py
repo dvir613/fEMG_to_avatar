@@ -14,9 +14,8 @@ project_folder = os.path.abspath(os.path.join(script_dir, '..'))
 
 
 # window length and step length in seconds
-def sliding_window(data, method, fs, window_length=0.1, step_length=0.05):
+def sliding_window(data, method, fs, window_length=0.1):
     window_size = int(window_length * fs)
-    step_size = window_size  # Set step size equal to window size for disjoint windows
 
     # Calculate number of windows
     num_windows = data.shape[1] // window_size
@@ -24,18 +23,17 @@ def sliding_window(data, method, fs, window_length=0.1, step_length=0.05):
     # print(num_windows)
     result = np.zeros((data.shape[0], num_windows))
     if method == "RMS":
-        data = data ** 2
         for i in range(data.shape[0]):
             for j in range(num_windows):
-                result[i, j] = np.sqrt(np.mean(data[i, j * step_size:j * step_size + window_size]))
+                result[i, j] = np.sqrt(np.mean(np.power(data[i, j * window_size:j * window_size + window_size], 2)))
     if method == "MEAN":
         for i in range(data.shape[0]):
             for j in range(num_windows):
-                result[i, j] = np.mean(data[i, j * step_size:j * step_size + window_size])
+                result[i, j] = np.mean(data[i, j * window_size:j * window_size + window_size])
     if method == "Max":
         for i in range(data.shape[0]):
             for j in range(num_windows):
-                result[i, j] = np.max(data[i, j * step_size:j * step_size + window_size])
+                result[i, j] = np.max(data[i, j * window_size:j * window_size + window_size])
 
     return result
 
@@ -111,7 +109,6 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
     test_data_timing = []
 
     if rand_lst is None:
-        data_is_ICA = True
         num_groups = len(trials_lst_timing) // 3
         rand_lst = np.random.choice(3, size=num_groups)  # Adjust rand_lst to be relative to each group
 
@@ -153,8 +150,8 @@ def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant
     relevant_data_train_avatar, relevant_data_test_avatar, rand_lst ,test_data_timing =  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, for_plot_flag, rand_lst, events_timings=events_timings,
                                                            segments_length=segments_length, norm=norm, averaging=averaging)
     # save only the same trials as the emg data
-    # relevant_data_train_avatar = relevant_data_train_avatar[:, :relevant_data_train_emg.shape[1]]
-    # relevant_data_test_avatar = relevant_data_test_avatar[:, :relevant_data_test_emg.shape[1]]
+    relevant_data_train_avatar = relevant_data_train_avatar[:, :relevant_data_train_emg.shape[1]]
+    relevant_data_test_avatar = relevant_data_test_avatar[:, :relevant_data_test_emg.shape[1]]
     return relevant_data_train_avatar, relevant_data_test_avatar
 
 

@@ -190,6 +190,7 @@ class Data(Thread):
                          equipment: str = '',
                          admincode: str = '',
                          gender: str = '',
+                         sex: str = '',
                          birthdate: Union[datetime, str] = ''):
 
         startdate = self.start_time
