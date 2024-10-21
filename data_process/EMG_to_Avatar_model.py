@@ -29,6 +29,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from torch.utils.data import DataLoader, TensorDataset
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from scipy.ndimage import uniform_filter1d, median_filter
 
 from prepare_data_for_model import *
 
@@ -129,7 +130,9 @@ def train_improved_model(model, X_train, Y_train, X_val, Y_val, criterion, Early
         criterion = nn.MSELoss()
     elif criterion == 'pearson':
         criterion = pearson_correlation_loss
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)  # Added L2 regularization
+    elif criterion == 'SmoothL1Loss':
+        criterion = nn.SmoothL1Loss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)  # Added L2 regularization
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
 
     train_losses = []
@@ -285,6 +288,8 @@ def train_model(model, X_train, Y_train, X_test, Y_test, criterion, epochs=100, 
         criterion = nn.MSELoss()
     elif criterion == 'pearson':
         criterion = pearson_correlation_loss
+    elif criterion == 'SmoothL1Loss':
+        criterion = nn.SmoothL1Loss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     train_losses = []
@@ -423,6 +428,8 @@ def train_and_evaluate_best_model(model, X_train, X_test, criterion, best_batch_
         criterion = nn.MSELoss()
     elif criterion == 'pearson':
         criterion = pearson_correlation_loss
+    elif criterion == 'SmoothL1Loss':
+        criterion = nn.SmoothL1Loss()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=best_lr)
 
@@ -669,13 +676,48 @@ def evaluate_models(X_train, X_test, Y_train, Y_test, model_name, data_label, cr
     return model, mse, r2, mae, Y_pred
 
 
+def filter_predictions(predictions, method='mean', window_size=3):
+    """
+    Apply a filter to the prediction values.
+
+    Args:
+    predictions (numpy.array): The original prediction values
+    method (str): The filtering method to use ('mean' or 'median')
+    window_size (int): The size of the sliding window for the filter
+
+    Returns:
+    numpy.array: The filtered prediction values
+    """
+
+    if method == 'mean':
+        return uniform_filter1d(predictions, size=window_size)
+
+    elif method == 'median':
+        return median_filter(predictions, size=window_size)
+
+    else:
+        raise ValueError("Invalid method. Choose 'mean' or 'median'.")
+
+
+def filter_and_rescale(predictions, filter_method='mean', filter_window=3,
+                       rescale_range=(0, 1)):
+    filtered = filter_predictions(predictions, method=filter_method, window_size=filter_window)
+    min_val, max_val = rescale_range
+    return min_val + (max_val - min_val) * (filtered - filtered.min()) / (
+            filtered.max() - filtered.min())
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
     parser.add_argument("--data_path", default=f"C:/Users/YH006_new/fEMG_to_avatar/data", help="Path to data directory")
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
+    parser.add_argument("--train_one_trial", action="store_true", default=True)
+    parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
+    parser.add_argument("--scale_data", action="store_true", default=True, help="Scale data flag")
+    parser.add_argument("--train_models", action="store_true", default=False, help="Train models or load parameters flag")
     parser.add_argument("--train_deep_learning_model", action="store_true", default=True,
                         help="Train deep learning model flag")
     parser.add_argument("--tune_autoencoder", action="store_true", default=False, help="Tune autoencoder flag")
@@ -688,7 +730,7 @@ def main():
                                                                                  'ImprovedEnhancedTransformNet'],
                         help="Model name")
     parser.add_argument("--train_autoencoder", action="store_true", default=False, help="Train autoencoder flag")
-    parser.add_argument("--criterion", default='pearson', choices=['mse', 'pearson'], help="Loss criterion")
+    parser.add_argument("--criterion", default='SmoothL1Loss', choices=['mse', 'pearson', 'SmoothL1Loss'], help="Loss criterion")
     parser.add_argument("--Early_stopping", action="store_true", default=True, help="Early stopping flag")
     parser.add_argument("--segments_length", type=int, default=4, help="Length of segments in seconds")
     parser.add_argument("--models", nargs='+',
@@ -703,14 +745,14 @@ def main():
 
     performance_results = []
     for participant_folder in os.listdir(args.data_path):
-        if not participant_folder == 'participant_02':
+        if not participant_folder == 'participant_03':
             continue
         if 'csv' in participant_folder:
             continue
         participant_ID = participant_folder
         participant_folder_path = os.path.join(args.data_path, participant_folder)
         for session_folder in os.listdir(participant_folder_path):
-            if session_folder == 'S1':
+            if not session_folder == 'S1':
                 continue
             session_folder_path = os.path.join(participant_folder_path, session_folder)
             session_number = session_folder
@@ -734,17 +776,23 @@ def main():
                 # Prepare data for model (existing code)
                 annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
                                     '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
+                annotations_list_to_remove = ([f"{annot}_trial_1" for annot in annotations_list] +
+                                              [f"{annot}_trial_2" for annot in annotations_list] +
+                                              [f"{annot}_trial_3" for annot in annotations_list])
                 # print all the annotations that contains the strings in annotations_list
                 annotations_list_with_start_end = []
                 for annotation in emg_file.annotations.description:
-                    for name in annotations_list:
-                        #         if annotation contains the name, append the annotation to the list
-                        if name in annotation:
-                            annotations_list_with_start_end.append(annotation)
-                for annotation in annotations_list_with_start_end:
-                    if annotation in annotations_list:
-                        #         delete the annotation from the list
-                        annotations_list_with_start_end.remove(annotation)
+                    if args.train_one_trial:
+                        if args.trial_num in annotation:
+                            if 'start' in annotation or 'end' in annotation:
+                                if not 'Break' in annotation:
+                                    if not 'Face_at_rest' in annotation:
+                                        annotations_list_with_start_end.append(annotation)
+                    else:
+                        if 'start' in annotation or 'end' in annotation:
+                            if not 'Break' in annotation:
+                                if not 'Face_at_rest' in annotation:
+                                    annotations_list_with_start_end.append(annotation)
                 events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
                 # make events_timings into a list with 10 lists that each contains the start and end of the annotation
                 events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
@@ -779,22 +827,23 @@ def main():
                                                                                                      norm=None,
                                                                                                      averaging="RMS")
                 # plot ICA components vs avatar blendshapes
-                plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 1,
-                                        participant_ID,
-                                        session_number)
+                # plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 1,
+                #                         participant_ID,
+                #                         session_number)
                 X_train = relevant_data_train_emg.T
                 X_test = relevant_data_test_emg.T
                 Y_train = relevant_data_train_avatar.T
                 Y_test = relevant_data_test_avatar.T
 
-                # # Standardize the features
-                scaler_X = StandardScaler()
-                scaler_Y = StandardScaler()
+                if args.scale_data:
+                    # # Standardize the features
+                    scaler_X = StandardScaler()
+                    scaler_Y = StandardScaler()
 
-                X_train = scaler_X.fit_transform(X_train)
-                X_test = scaler_X.transform(X_test)
-                Y_train = scaler_Y.fit_transform(Y_train)
-                Y_test = scaler_Y.transform(Y_test)
+                    X_train = scaler_X.fit_transform(X_train)
+                    X_test = scaler_X.transform(X_test)
+                    Y_train = scaler_Y.fit_transform(Y_train)
+                    Y_test = scaler_Y.transform(Y_test)
 
                 if args.train_deep_learning_model:
                     # Convert to PyTorch tensors and move to the selected device
@@ -810,8 +859,12 @@ def main():
                     if args.train_linear_transform:
                         model_name = args.model_name
                         path_to_best_params = fr"{project_folder}/results/best_params_{model_name}.json"
-                        best_params = load_best_params(path_to_best_params)
-                        # best_params = None
+                        if args.train_one_trial:
+                            path_to_best_params = path_to_best_params.replace(f'.json', f"_{args.trial_num}.json")
+                        if args.train_models:
+                            best_params = None
+                        else:
+                            best_params = load_best_params(path_to_best_params)
                         if best_params is None:
                             print("Best parameters not found. Running hyperparameter tuning...")
                             best_params, best_losses = tune_hyperparameters(X_train, Y_train, input_dim, output_dim,
@@ -833,17 +886,26 @@ def main():
                         #    save the model
                         model_path = os.path.join(session_folder_path,
                                                   f"{participant_ID}_{session_number}_blendshapes_{model_name}_{config}.joblib")
+                        if args.train_one_trial:
+                            model_path = model_path.replace(f'_{config}.joblib', f"_{args.trial_num}_{config}.joblib")
                         joblib.dump(best_model, model_path)
                         print(f"Model {model_name} for {config} saved as {model_path}")
 
                         # Move predictions back to CPU for further processing
                         Y_pred = Y_pred.cpu().numpy()
-
                         if args.save_results:
                             # perform the inverse transformation to get the original values
-                            Y_pred = scaler_Y.inverse_transform(Y_pred)
+                            if args.scale_data:
+                                Y_pred = scaler_Y.inverse_transform(Y_pred)
+                            # filtered_and_rescaled = filter_and_rescale(Y_pred, filter_method='mean',
+                            #                                            filter_window=3,
+                            #                                            rescale_range=(0, 1))
+                            # plot_ica_vs_blendshapes(annotations_list, test_data_timing, filtered_and_rescaled.T, 1,
+                            #                         participant_ID, session_number)
                             pred_path = os.path.join(session_folder_path,
                                                      f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
+                            if args.train_one_trial:
+                                pred_path = pred_path.replace(f'_{config}.csv', f"_{args.trial_num}_{config}.csv")
                             pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
                             print(f"Predicted data saved as {pred_path}")
 
@@ -884,6 +946,8 @@ def main():
                             Y_pred = scaler_Y.inverse_transform(Y_pred)
                             pred_path = os.path.join(session_folder_path,
                                                      f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
+                            if args.train_one_trial:
+                                pred_path = pred_path.replace(f'_{config}.csv', f"_{args.trial_num}_{config}.csv")
                             pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
                             model_path = os.path.join(session_folder_path,
                                                       f"{participant_ID}_{session_number}_blendshapes_model_{model_name}_{config}.joblib")
@@ -929,15 +993,18 @@ def main():
                     # Reset performance_results for the next session
                     performance_results = []
 
-                plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
-                                           test_data_timing)
+                # plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
+                #                            test_data_timing)
                 # convert the test values to the original scale
                 Y_test = relevant_data_test_avatar.T
                 # Save avatar data (existing code)
                 avatar_sliding_window_method = "RMS"
-                pd.DataFrame(Y_test, columns=blendshapes).to_csv(
-                    os.path.join(session_folder_path,
-                                 f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv"))
+                path = os.path.join(session_folder_path,
+                                 f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv")
+                if args.train_one_trial:
+                    path = path.replace(f'.csv', f"_{args.trial_num}.csv")
+                pd.DataFrame(Y_test, columns=blendshapes).to_csv(path)
+
                 print("Avatar data saved as CSV file.\n")
 
 
@@ -1003,7 +1070,9 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
 
 def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, emg_fs, participant_ID,
                             session_number):
-    annotations_list_edited = [annot[2:].replace("_", " ") for annot in annotations_list]
+    annotations_list_edited = ([annot[2:].replace("_", " ") for annot in annotations_list] +
+    [annot[2:].replace("_", " ") for annot in annotations_list] +
+    [annot[2:].replace("_", " ") for annot in annotations_list])
 
     num_plots = len(relevant_data_test_emg)
     fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24), dpi=300, sharex=True)

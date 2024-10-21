@@ -45,7 +45,7 @@ def prepare_data(participant_number, session_number, model, avaraging_method, st
 
     # Load the full video data
     video_full_data = pd.read_csv(f"../data/participant_{participant_number}/S{session_number}/"
-                                  f"participant_{participant_number}_S{session_number}_avatar_blendshapes_{avaraging_method}.csv",
+                                  f"participant_{participant_number}_S{session_number}_avatar_blendshapes_{avaraging_method}_trial_1.csv",
                                   index_col=0)
 
     # Start from the desired part
@@ -61,11 +61,11 @@ def prepare_data(participant_number, session_number, model, avaraging_method, st
 
 if __name__ == '__main__':
     # choose the participant number, session number, and model (as strings)
-    participant_number = '02'
-    session_number = '2'
+    participant_number = '03'
+    session_number = '1'
     # LinearTransform_ICA
     # Autoencoder_ICA
-    model = "ImprovedEnhancedTransformNet"  # "LR" for linear regression, "ETR" for extra trees regressor
+    model = "ImprovedEnhancedTransformNet_trial_1"  # "LR" for linear regression, "ETR" for extra trees regressor
     avatar_avaraging_method = "RMS"
 
     # Prepare the data
