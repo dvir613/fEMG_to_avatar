@@ -994,7 +994,7 @@ def main():
                     performance_results = []
 
                 plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
-                                           test_data_timing)
+                                           test_data_timing, project_folder)
                 # convert the test values to the original scale
                 Y_test = relevant_data_test_avatar.T
                 # Save avatar data (existing code)
@@ -1008,10 +1008,20 @@ def main():
                 print("Avatar data saved as CSV file.\n")
 
 
-def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, test_data_timing):
-    num_plots = len(blendshapes)
-    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24 * num_plots // 31), dpi=300, sharex=True)
-    plt.rcParams.update({'font.size': 20})
+def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, test_data_timing, project_folder):
+    # Calculate correlations for each action unit
+    correlations = []
+    for i in range(Y_test.shape[1]):
+        corr, _ = pearsonr(Y_pred[i], Y_test[i])
+        correlations.append((i, corr))
+
+    # Sort correlations in descending order and get top 10
+    correlations.sort(key=lambda x: x[1], reverse=True)
+    top_10 = correlations[:16]
+
+    num_plots = len(top_10)
+    fig, axs = plt.subplots(num_plots, 1, figsize=(20, 28 * num_plots // 16), dpi=300, sharex=True)
+    plt.rcParams.update({'font.size': 28})
 
     # Calculate the overall time range for both EMG and avatar data
     max_time_emg = max(len(data) for data in Y_pred)
@@ -1028,15 +1038,20 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
                             range(len(test_data_timing))]
     annotation_positions.append(max_time)  # Add the last position
 
-    for i, blendshape in enumerate(blendshapes):
-        ax = axs[i] if num_plots > 1 else axs  # Handle case when there's only one subplot
+    for plot_index, (i, corr) in enumerate(top_10):
+        ax = axs[plot_index] if num_plots > 1 else axs  # Handle case when there's only one subplot
 
         time_axis_pred = np.arange(len(Y_pred[i]))
         time_axis_test = np.arange(len(Y_test[i]))
 
         # Increased linewidth for both plots
-        ax.plot(time_axis_pred, Y_pred[i], label='Predicted', color='blue', linewidth=4)
-        ax.plot(time_axis_test, Y_test[i], label='Ground Truth', color='red', linestyle='--', linewidth=4)
+        pred_line, = ax.plot(time_axis_pred, Y_pred[i], color='blue', linewidth=4)
+        truth_line, = ax.plot(time_axis_test, Y_test[i], color='red', linestyle='--', linewidth=4)
+
+        # Only add legend to the first subplot
+        fig.legend([pred_line, truth_line], ['Predicted', 'Ground Truth'],
+                   loc='upper center', bbox_to_anchor=(0.5, 1),
+                   ncol=2, fontsize=24)
 
         ax.set_ylim(data_min, data_max)
         ax.set_xlim(0, max_time)
@@ -1049,10 +1064,10 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
         ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.7)
 
         # Adjust tick parameters
-        ax.tick_params(axis='both', which='both', labelsize=16)  # Reduced tick label size
+        ax.tick_params(axis='both', which='both', labelsize=28)  # Reduced tick label size
 
-        # Add y-axis label for all subplots
-        ax.set_ylabel(f'{blendshape}', rotation=0, ha='right', va='center', fontsize=24)
+        # Add y-axis label with AU number and correlation
+        ax.set_ylabel(f'AU {i + 1}\nr = {corr:.2f}', rotation=0, ha='right', va='center', fontsize=28)
 
         # Adjust y-axis label position
         ax.yaxis.set_label_coords(-0.1, 0.5)  # Move y-label to the left
@@ -1061,12 +1076,14 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
         for pos in annotation_positions[:-1]:
             ax.axvline(x=pos, color='red', linestyle='--', linewidth=0.7, alpha=0.7)
 
-    # Set xticks to be []
-    plt.setp(axs, xticks=[])
-    plt.tight_layout(rect=[0.05, 0.03, 1, 0.97])  # Adjust margins
-    plt.savefig(fr"{project_folder}\results\predictions_vs_avatar.png")
-    plt.close()
+    # Set x-axis ticks and labels
+    last_ax = axs[-1] if num_plots > 1 else axs
+    last_ax.set_xticks(annotation_positions[:-1])
+    last_ax.set_xticklabels(annotations_list_edited, rotation=90, ha='center')
 
+    plt.tight_layout(rect=[0.05, 0.03, 1, 0.98])  # Adjust margins
+    plt.savefig(fr"{project_folder}\results\predictions_vs_avatar_top16_corr.png")
+    plt.close()
 
 def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, emg_fs, participant_ID,
                             session_number):
