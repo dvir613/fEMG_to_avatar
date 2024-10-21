@@ -10,17 +10,17 @@ from joblib import Parallel, delayed
 
 from CONSTS import relevant_blendshapes
 
-folder_name = 'Dar'  # the name of the folder of the participant's data
-participant_number = '01'  # the number of the participant (next times it should be identical to the folder name
-scene = '001'  # the scene number of the recording
+folder_name = 'Hila'  # the name of the folder of the participant's data
+participant_number = '03'  # the number of the participant (next times it should be identical to the folder name
+scene = '017'  # the scene number of the recording
 session = '1'  # the session of the recording
 
 # Get the absolute path of the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 recordings_files_path = os.path.abspath(os.path.join(script_dir, '..', 'liveCapture', 'Assets'))
-anim_file_path = fr"{recordings_files_path}\{folder_name}\{folder_name}\SampleHead [{folder_name}] [00{session}].anim"
-asset_file_path = fr"{recordings_files_path}\{folder_name}\[{scene}] {folder_name} [00{session}].asset"
+anim_file_path = fr"C:\Users\YH006_new\fEMG_to_avatar\liveCapture\Assets\Hila\SampleHead [Hila] [017].anim"
+asset_file_path = fr"C:\Users\YH006_new\fEMG_to_avatar\liveCapture\Assets\[001] Hila [017].asset"
 output_csv_path = fr'..\data\participant_{participant_number}\S{session}\participant_{participant_number}_S{session}_interpolated_relevant_only_right.csv'
 
 # # Check if the file already exists

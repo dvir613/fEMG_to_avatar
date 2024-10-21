@@ -68,9 +68,6 @@ def normalize_ica_data(ica_data):
 
 
 def get_annotations_timings(emg_file, annotations_list=None):
-    if annotations_list is None:
-        annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
-                            '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
     edf_annotations = emg_file.annotations
     events_annotations = [annot for annot in edf_annotations if annot['description'] in annotations_list]
     events_timings = [annot['onset'] for annot in events_annotations]

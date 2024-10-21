@@ -993,8 +993,8 @@ def main():
                     # Reset performance_results for the next session
                     performance_results = []
 
-                # plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
-                #                            test_data_timing)
+                plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
+                                           test_data_timing)
                 # convert the test values to the original scale
                 Y_test = relevant_data_test_avatar.T
                 # Save avatar data (existing code)
