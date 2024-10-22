@@ -713,6 +713,7 @@ def main():
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
+    parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
@@ -799,13 +800,13 @@ def main():
 
                 if args.ica_flag:
                     relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        ica_after_order, emg_file, emg_fs, events_timings, False,
+                        ica_after_order, emg_file, emg_fs, events_timings, args.plot_ica,
                         events_timings=events_timings,
                         segments_length=args.segments_length, norm="ICA",
                         averaging="RMS")
                 elif args.emg_flag:
                     relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        X_full, emg_file, emg_fs, events_timings, False,
+                        X_full, emg_file, emg_fs, events_timings, args.plot_ica,
                         events_timings=events_timings,
                         segments_length=args.segments_length, norm="ICA",
                         averaging="RMS")
@@ -820,16 +821,17 @@ def main():
                                                                                                      relevant_data_train_emg,
                                                                                                      relevant_data_test_emg,
                                                                                                      events_timings,
-                                                                                                     False, rand_lst,
+                                                                                                     args.plot_ica, rand_lst,
                                                                                                      fs=60,
                                                                                                      events_timings=events_timings,
                                                                                                      segments_length=args.segments_length,
                                                                                                      norm=None,
                                                                                                      averaging="RMS")
-                # plot ICA components vs avatar blendshapes
-                plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 500,
-                                        participant_ID,
-                                        session_number, project_folder)
+                if args.plot_ica:
+                    # plot ICA components vs avatar blendshapes
+                    plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 500,
+                                            participant_ID,
+                                            session_number, project_folder)
                 X_train = relevant_data_train_emg.T
                 X_test = relevant_data_test_emg.T
                 Y_train = relevant_data_train_avatar.T
@@ -1079,76 +1081,61 @@ def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, te
     for i in range(Y_test.shape[1]):
         corr, _ = pearsonr(Y_pred[i], Y_test[i])
         correlations.append((i, corr))
-
     # Sort correlations in descending order and get top 10
     correlations.sort(key=lambda x: x[1], reverse=True)
     top_16 = correlations[:16]
     num_plots = len(correlations[:16])
     fig, axs = plt.subplots(16, 1, figsize=(16, 26), dpi=300, sharex=True)
     plt.rcParams.update({'font.size': 32})
-
     # Calculate the overall time range for both EMG and avatar data
     max_time_emg = max(len(data) for data in Y_pred)
     max_time_avatar = max(len(data) for data in Y_test)
     max_time = max(max_time_emg, max_time_avatar)
-
     # Find global min and max for both predicted and ground truth
     data_min = min(min(np.min(Y_pred[i]), np.min(Y_test[i])) for i in range(Y_test.shape[1]))
     data_max = max(max(np.max(Y_pred[i]), np.max(Y_test[i])) for i in range(Y_test.shape[1]))
-
     # Process annotations
     annotations_list_edited = [annot[2:].replace("_", " ")+"  " for annot in annotations_list]
     annotation_positions = [sum(int(test_data_timing[j][1] - test_data_timing[j][0]) // 1.26 for j in range(i)) for i in
                             range(len(test_data_timing))]
+    # except from the first annotation, add 1.26 seconds to the start of each annotation
+    for i in range(1, len(annotation_positions)):
+        annotation_positions[i] = annotation_positions[i] + 0.45
     annotation_positions.append(max_time)  # Add the last position
-
     for plot_index, (i, corr) in enumerate(top_16):
         ax = axs[plot_index] if num_plots > 1 else axs  # Handle case when there's only one subplot
-
         time_axis_pred = np.arange(len(Y_pred[i]))
         time_axis_test = np.arange(len(Y_test[i]))
-
         # Increased linewidth for both plots
         pred_line, = ax.plot(time_axis_pred, Y_pred[i], color='blue', linewidth=6)
         truth_line, = ax.plot(time_axis_test, Y_test[i], color='red', linestyle='--', linewidth=6)
-
         # Only add legend to the first subplot
         fig.legend([pred_line, truth_line], ['Predicted', 'Ground Truth'],
-                   loc='upper center', bbox_to_anchor=(0.5, 1),
+                   loc='upper center', bbox_to_anchor=(0.6, 1),
                    ncol=2, fontsize=30)
-
         ax.set_ylim(data_min, data_max)
         ax.set_xlim(0, max_time)
-
         # Remove top and right spines
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-
         # Add horizontal line at y=0
         ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.7)
-
         # Adjust tick parameters
         ax.tick_params(axis='both', which='both', labelsize=32)  # Reduced tick label size
-
         # Add y-axis label with AU number and correlation
         ax.set_ylabel(f'AU {i + 1}', rotation=0, ha='right', va='center', fontsize=32)
-
         # Adjust y-axis label position
         ax.yaxis.set_label_coords(-0.1, 0.5)  # Move y-label to the left
-
         # Add vertical lines for annotations
         for pos in annotation_positions[:-1]:
             ax.axvline(x=pos, color='red', linestyle='--', linewidth=0.7, alpha=0.7)
-
     # Set x-axis ticks and labels
     last_ax = axs[-1] if num_plots > 1 else axs
     last_ax.set_xticks(annotation_positions[:-1])
     last_ax.set_xticklabels(annotations_list_edited, rotation=90, ha='center')
-
     plt.tight_layout(rect=[0.05, 0.03, 1, 0.98])  # Adjust margins
     plt.savefig(fr"{project_folder}\results\predictions_vs_avatar_top16_corr.png")
     plt.close()
-
 
 def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, emg_fs, participant_ID,
                             session_number, project_folder):
