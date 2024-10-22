@@ -21,7 +21,7 @@ from sklearn.svm import SVR
 from sklearn.ensemble import ExtraTreesRegressor
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
-from scipy.stats import ttest_rel
+from scipy.stats import ttest_rel, pearsonr
 import seaborn as sns
 from scipy import signal
 from sklearn.model_selection import GridSearchCV
@@ -799,13 +799,13 @@ def main():
 
                 if args.ica_flag:
                     relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        ica_after_order, emg_file, emg_fs, events_timings, False,
+                        ica_after_order, emg_file, emg_fs, events_timings, True,
                         events_timings=events_timings,
                         segments_length=args.segments_length, norm="ICA",
                         averaging="RMS")
                 elif args.emg_flag:
                     relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        X_full, emg_file, emg_fs, events_timings, False,
+                        X_full, emg_file, emg_fs, events_timings, True,
                         events_timings=events_timings,
                         segments_length=args.segments_length, norm="ICA",
                         averaging="RMS")
@@ -827,9 +827,9 @@ def main():
                                                                                                      norm=None,
                                                                                                      averaging="RMS")
                 # plot ICA components vs avatar blendshapes
-                # plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 1,
-                #                         participant_ID,
-                #                         session_number)
+                plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 1,
+                                        participant_ID,
+                                        session_number)
                 X_train = relevant_data_train_emg.T
                 X_test = relevant_data_test_emg.T
                 Y_train = relevant_data_train_avatar.T
@@ -995,11 +995,13 @@ def main():
 
                 plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
                                            test_data_timing, project_folder)
+                plot_correlations_barplot(Y_pred, relevant_data_test_avatar.T, project_folder)
                 # convert the test values to the original scale
                 Y_test = relevant_data_test_avatar.T
                 # Save avatar data (existing code)
                 avatar_sliding_window_method = "RMS"
                 path = os.path.join(session_folder_path,
+
                                  f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv")
                 if args.train_one_trial:
                     path = path.replace(f'.csv', f"_{args.trial_num}.csv")
@@ -1008,101 +1010,78 @@ def main():
                 print("Avatar data saved as CSV file.\n")
 
 
-def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, test_data_timing, project_folder):
-    # Calculate correlations for each action unit
+def plot_correlations_barplot(Y_pred, Y_test, project_folder):
+    """
+    Create a horizontal barplot of correlations between predicted and ground truth values for each action unit,
+    with proper bar spacing and visibility of negative values.
+    """
+    # Calculate correlations for all action units
     correlations = []
     for i in range(Y_test.shape[1]):
         corr, _ = pearsonr(Y_pred[i], Y_test[i])
-        correlations.append((i, corr))
+        correlations.append(corr)
 
-    # Sort correlations in descending order and get top 10
-    correlations.sort(key=lambda x: x[1], reverse=True)
-    top_10 = correlations[:16]
+    # Create figure
+    plt.figure(figsize=(10, 12), dpi=300)
+    plt.rcParams.update({'font.size': 26})
 
-    num_plots = len(top_10)
-    fig, axs = plt.subplots(num_plots, 1, figsize=(20, 28 * num_plots // 16), dpi=300, sharex=True)
-    plt.rcParams.update({'font.size': 28})
+    # Create horizontal barplot
+    y_pos = np.arange(len(correlations)) * 1.2  # Multiply by 1.2 for spacing between bars
+    bars = plt.barh(y_pos, correlations, height=0.8)  # Height < 1 creates space between bars
 
-    # Calculate the overall time range for both EMG and avatar data
-    max_time_emg = max(len(data) for data in Y_pred)
-    max_time_avatar = max(len(data) for data in Y_test)
-    max_time = max(max_time_emg, max_time_avatar)
+    # Customize bars with colors
+    for idx, bar in enumerate(bars):
+        if correlations[idx] < 0:
+            bar.set_color('red')
+        else:
+            bar.set_color('#4989E5')  # Light blue color
 
-    # Find global min and max for both predicted and ground truth
-    data_min = min(min(np.min(Y_pred[i]), np.min(Y_test[i])) for i in range(Y_test.shape[1]))
-    data_max = max(max(np.max(Y_pred[i]), np.max(Y_test[i])) for i in range(Y_test.shape[1]))
+    # Customize plot
+    plt.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
 
-    # Process annotations
-    annotations_list_edited = [annot[2:].replace("_", " ") for annot in annotations_list]
-    annotation_positions = [sum(int(test_data_timing[j][1] - test_data_timing[j][0]) // 1.26 for j in range(i)) for i in
-                            range(len(test_data_timing))]
-    annotation_positions.append(max_time)  # Add the last position
+    # Set labels
+    plt.xlabel('Correlation Coefficient', fontsize=34)
+    plt.ylabel('Action Unit', fontsize=34)
 
-    for plot_index, (i, corr) in enumerate(top_10):
-        ax = axs[plot_index] if num_plots > 1 else axs  # Handle case when there's only one subplot
+    # Add grid
+    plt.grid(True, axis='x', linestyle='--', alpha=0.3)
 
-        time_axis_pred = np.arange(len(Y_pred[i]))
-        time_axis_test = np.arange(len(Y_test[i]))
+    # Set x-axis limits to show negative values
+    min_corr = min(min(correlations) - 0.1, -0.1)  # Ensure we show at least to -0.1
+    max_corr = max(max(correlations) + 0.1, 1.0)   # Ensure we show at least to 1.0
+    plt.xlim(min_corr, max_corr)
 
-        # Increased linewidth for both plots
-        pred_line, = ax.plot(time_axis_pred, Y_pred[i], color='blue', linewidth=4)
-        truth_line, = ax.plot(time_axis_test, Y_test[i], color='red', linestyle='--', linewidth=4)
+    # Set y-axis limits and ticks
+    plt.yticks(y_pos, range(1, len(correlations) + 1), fontsize=24)
+    plt.ylim(min(y_pos) - 0.6, max(y_pos) + 0.6)  # Adjust limits to remove extra space
 
-        # Only add legend to the first subplot
-        fig.legend([pred_line, truth_line], ['Predicted', 'Ground Truth'],
-                   loc='upper center', bbox_to_anchor=(0.5, 1),
-                   ncol=2, fontsize=24)
+    # Move x-axis to top
+    ax = plt.gca()
+    ax.xaxis.set_ticks_position('top')
+    ax.xaxis.set_label_position('top')
 
-        ax.set_ylim(data_min, data_max)
-        ax.set_xlim(0, max_time)
+    # Remove top and right spines
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['right'].set_visible(False)
 
-        # Remove top and right spines
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
+    # Add more space at the top for labels
+    plt.subplots_adjust(top=0.85, left=0.15, right=0.95)
 
-        # Add horizontal line at y=0
-        ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.7)
-
-        # Adjust tick parameters
-        ax.tick_params(axis='both', which='both', labelsize=28)  # Reduced tick label size
-
-        # Add y-axis label with AU number and correlation
-        ax.set_ylabel(f'AU {i + 1}\nr = {corr:.2f}', rotation=0, ha='right', va='center', fontsize=28)
-
-        # Adjust y-axis label position
-        ax.yaxis.set_label_coords(-0.1, 0.5)  # Move y-label to the left
-
-        # Add vertical lines for annotations
-        for pos in annotation_positions[:-1]:
-            ax.axvline(x=pos, color='red', linestyle='--', linewidth=0.7, alpha=0.7)
-
-    # Set x-axis ticks and labels
-    last_ax = axs[-1] if num_plots > 1 else axs
-    last_ax.set_xticks(annotation_positions[:-1])
-    last_ax.set_xticklabels(annotations_list_edited, rotation=90, ha='center')
-
-    plt.tight_layout(rect=[0.05, 0.03, 1, 0.98])  # Adjust margins
-    plt.savefig(fr"{project_folder}\results\predictions_vs_avatar_top16_corr.png")
+    # Save plot
+    plt.savefig(fr"{project_folder}\results\correlations_barplot.png", bbox_inches='tight')
     plt.close()
+
+
 
 def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, emg_fs, participant_ID,
                             session_number):
-    annotations_list_edited = ([annot[2:].replace("_", " ") for annot in annotations_list] +
-    [annot[2:].replace("_", " ") for annot in annotations_list] +
-    [annot[2:].replace("_", " ") for annot in annotations_list])
+    annotations_list_edited = [annot[2:].replace("_", " ")+"  " for annot in annotations_list]
 
     num_plots = len(relevant_data_test_emg)
-    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 24), dpi=300, sharex=True)
-    plt.rcParams.update({'font.size': 24})  # Adjust base font size
+    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 26), dpi=300, sharex=True)
+    plt.rcParams.update({'font.size': 32})  # Adjust base font size
 
-    # Normalize ICA data
-    def normalize_data(data):
-        return (data - np.mean(data)) / np.std(data)
-
-    normalized_emg = [normalize_data(data) for data in relevant_data_test_emg]
-
-    # Calculate the overall time range for EMG data
-    max_time_emg = max(len(data) for data in normalized_emg) / emg_fs
+    max_time_emg = max(len(data) for data in relevant_data_test_emg) / emg_fs
 
     # Calculate annotation positions
     annotation_positions = [sum(test_data_timing[j][1] - test_data_timing[j][0] for j in range(i)) for i in
@@ -1113,16 +1092,16 @@ def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_te
         # Reverse the order of ICA plots
         ica_index = num_plots - i - 1
 
-        time_axis_emg = np.arange(len(normalized_emg[ica_index])) / emg_fs
+        time_axis_emg = np.arange(len(relevant_data_test_emg[ica_index])) / emg_fs
         ax_ica = axs[i]
-        ax_ica.plot(time_axis_emg, normalized_emg[ica_index], linewidth=0.8, color='blue')
+        ax_ica.plot(time_axis_emg, relevant_data_test_emg[ica_index], linewidth=0.8, color='blue')
         ax_ica.set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center', size=30)
         ax_ica.set_xlim(0, max_time_emg)
-        ax_ica.set_ylim(-4, 4)  # Set y-axis limits to -3 to 3
+        ax_ica.set_ylim(-5, 5)  # Set y-axis limits to -3 to 3
         ax_ica.spines['top'].set_visible(False)
         ax_ica.spines['right'].set_visible(False)
-        ax_ica.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=False, labelsize=20)
-        ax_ica.tick_params(axis='y', which='both', labelsize=18)
+        ax_ica.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=False, labelsize=32)
+        ax_ica.tick_params(axis='y', which='both', labelsize=32)
         ax_ica.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
 
         # Add vertical lines for annotations
@@ -1132,8 +1111,64 @@ def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_te
     # Set xticks and labels only for the bottom subplot
     ax_bottom = axs[-1]
     ax_bottom.set_xticks(annotation_positions)
-    ax_bottom.set_xticklabels(annotations_list_edited + [" "], rotation=90, ha='center', va='top', fontsize=28)
-    ax_bottom.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True, labelsize=28)
+    ax_bottom.set_xticklabels(annotations_list_edited + [" "], rotation=90, ha='center', va='top', fontsize=32)
+    ax_bottom.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True, labelsize=32)
+
+    # Adjust layout to prevent overlap
+    plt.tight_layout(rect=[0, 0.03, 1, 0.90])  # Adjust the rect parameter to make room for suptitle
+    plt.savefig(fr"{project_folder}\results\{participant_ID}_{session_number}_ICA_components.png")
+    plt.close()
+
+
+
+
+def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, emg_fs, participant_ID,
+                            session_number):
+    annotations_list_edited = [annot[2:].replace("_", " ")+"  " for annot in annotations_list]
+
+    num_plots = len(relevant_data_test_emg)
+    fig, axs = plt.subplots(num_plots, 1, figsize=(16, 26), dpi=300, sharex=True)
+    plt.rcParams.update({'font.size': 32})  # Adjust base font size
+
+    # # Normalize ICA data
+    # def normalize_data(data):
+    #     return (data - np.mean(data)) / np.std(data)
+    #
+    # normalized_emg = [normalize_data(data) for data in relevant_data_test_emg]
+
+    # Calculate the overall time range for EMG data
+    max_time_emg = max(len(data) for data in relevant_data_test_emg) / emg_fs
+
+    # Calculate annotation positions
+    annotation_positions = [sum(test_data_timing[j][1] - test_data_timing[j][0] for j in range(i)) for i in
+                            range(len(test_data_timing))]
+    annotation_positions.append(max_time_emg)  # Add the last position
+
+    for i in range(num_plots):
+        # Reverse the order of ICA plots
+        ica_index = num_plots - i - 1
+
+        time_axis_emg = np.arange(len(relevant_data_test_emg[ica_index])) / emg_fs
+        ax_ica = axs[i]
+        ax_ica.plot(time_axis_emg, relevant_data_test_emg[ica_index], linewidth=0.8, color='blue')
+        ax_ica.set_ylabel(f'ICA {ica_index + 1}', rotation=0, ha='right', va='center', size=30)
+        ax_ica.set_xlim(0, max_time_emg)
+        ax_ica.set_ylim(-5, 5)  # Set y-axis limits to -3 to 3
+        ax_ica.spines['top'].set_visible(False)
+        ax_ica.spines['right'].set_visible(False)
+        ax_ica.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=False, labelsize=32)
+        ax_ica.tick_params(axis='y', which='both', labelsize=32)
+        ax_ica.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
+
+        # Add vertical lines for annotations
+        for pos in annotation_positions[:-1]:
+            ax_ica.axvline(x=pos, color='red', linestyle='--', linewidth=0.5, alpha=0.7)
+
+    # Set xticks and labels only for the bottom subplot
+    ax_bottom = axs[-1]
+    ax_bottom.set_xticks(annotation_positions)
+    ax_bottom.set_xticklabels(annotations_list_edited + [" "], rotation=90, ha='center', va='top', fontsize=32)
+    ax_bottom.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True, labelsize=32)
 
     # Adjust layout to prevent overlap
     plt.tight_layout(rect=[0, 0.03, 1, 0.90])  # Adjust the rect parameter to make room for suptitle
