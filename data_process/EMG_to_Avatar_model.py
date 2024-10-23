@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 import joblib
+from mne.transforms import rotation
+
 from data_process.classifying_ica_components import filter_signal
 import torch
 import torch.nn as nn
@@ -222,7 +224,7 @@ def tune_hyperparameters(X, Y, input_dim, output_dim, criterion, n_splits=5, epo
                     elif model_name == 'ImprovedEnhancedTransformNet':
                         model = ImprovedEnhancedTransformNet(input_dim, output_dim, hidden_dim).to(device)
                     train_losses, val_losses = train_model(model, X_train, Y_train, X_val, Y_val, criterion,
-                                                           epochs=epochs, lr=lr)
+                                                           epochs=epochs, lr=lr, device=device)
                     scores.append(val_losses[-1])
                     fold_losses.append((train_losses, val_losses))
 
@@ -709,11 +711,11 @@ def filter_and_rescale(predictions, filter_method='mean', filter_window=3,
 
 def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
-    parser.add_argument("--data_path", default=f"C:/Users/YH006_new/fEMG_to_avatar/data", help="Path to data directory")
+    parser.add_argument("--data_path", default=fr"C:\Users\Hila\OneDrive\מסמכים\fEMG_to_avatar\data", help="Path to data directory")
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
-    parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
+    parser.add_argument("--plot_ica", action="store_true", default=True, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
@@ -828,14 +830,21 @@ def main():
                                                                                                      norm=None,
                                                                                                      averaging="RMS")
                 if args.plot_ica:
-                    # plot ICA components vs avatar blendshapes
-                    plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_test_emg, 500,
-                                            participant_ID,
-                                            session_number, project_folder)
-                X_train = relevant_data_train_emg.T
-                X_test = relevant_data_test_emg.T
-                Y_train = relevant_data_train_avatar.T
-                Y_test = relevant_data_test_avatar.T
+                    plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number,
+                             test_data_timing)
+
+                X_train = np.concatenate(relevant_data_train_emg, axis=1)
+                X_test = np.concatenate(relevant_data_test_emg, axis=1)
+                Y_train = np.concatenate(relevant_data_train_avatar, axis=1)
+                Y_test = np.concatenate(relevant_data_test_avatar, axis=1)
+                # save only the same trials as the emg data
+                Y_train = Y_train[:, :X_train.shape[1]]
+                Y_test = Y_test[:, :X_test.shape[1]]
+
+                X_train = X_train.T
+                X_test = X_test.T
+                Y_train = Y_train.T
+                Y_test = Y_test.T
 
                 if args.scale_data:
                     # # Standardize the features
@@ -1010,6 +1019,90 @@ def main():
                 pd.DataFrame(Y_test, columns=blendshapes).to_csv(path)
 
                 print("Avatar data saved as CSV file.\n")
+
+
+def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number, test_data_timing):
+    start_times = np.array(test_data_timing)[:, 0] * emg_fs
+    end_times = np.array(test_data_timing)[:, 1] * emg_fs
+    channel_labels = [f"ICA {i + 1}" for i in range(16)]
+    signals_list = relevant_data_test_emg
+    n_channels = len(signals_list[0])
+    n_annotations = len(annotations_list)
+    n_rows = n_channels
+    n_cols = n_annotations
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_rows // 2, n_cols))
+    # Reverse the channel order for plotting
+    channel_indices = list(range(n_channels))[::-1]
+    # First, calculate the maximum absolute value for each row (channel)
+    max_values_per_channel = np.zeros(n_channels)
+    for i, ch_idx in enumerate(channel_indices):
+        max_val = 0
+        for ann_idx in range(n_annotations):
+            signal = signals_list[ann_idx][ch_idx]
+            current_max = np.max(np.abs(signal))
+            max_val = max(max_val, current_max)
+        max_values_per_channel[i] = max_val
+    # Now plot the normalized signals
+    for i, ch_idx in enumerate(channel_indices):
+        for ann_idx in range(n_annotations):
+            ax = axs[i, ann_idx]
+            signal = signals_list[ann_idx][ch_idx]
+
+            # Normalize the signal by the maximum value for this channel
+            if max_values_per_channel[i] != 0:  # Avoid division by zero
+                signal = signal / max_values_per_channel[i]
+
+            start_time = float(start_times[ann_idx])
+            end_time = float(end_times[ann_idx])
+            x = np.linspace(start_time, end_time, len(signal))
+            # Changed color from 'k-' to 'b-' and reduced linewidth from 1.0 to 0.8
+            ax.plot(x, signal, 'b-', linewidth=0.8)
+
+            if i == 0:
+                ax.set_title(annotations_list[ann_idx][2:].replace("_", " "), rotation=90, pad=10)
+
+            if ann_idx == n_annotations - 1:
+                ax.text(1.15, 0.5, channel_labels[ch_idx],
+                        transform=ax.transAxes,
+                        verticalalignment='center',
+                        horizontalalignment='left',
+                        fontweight='bold')
+
+            ax.set_yticks([])
+
+            if i == n_channels - 1:
+                # Set two x-ticks at start and end times
+                ax.set_xticks([start_time, end_time])
+                # Convert to seconds and format as integers
+                ax.set_xticklabels([f"{int(start_time / emg_fs)}", f"{int(end_time / emg_fs)}"],
+                                   rotation=90)
+                if ann_idx == n_annotations // 2:
+                    ax.set_xlabel('Time (s)')
+                else:
+                    ax.set_xlabel('')
+            else:
+                ax.set_xticks([])
+                ax.set_xticklabels([])
+
+            ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
+
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            if i != n_channels - 1:
+                ax.spines['bottom'].set_visible(False)
+
+            time_range = end_time - start_time
+            padding = time_range * 0.05
+            ax.set_xlim(start_time - padding, end_time + padding)
+
+            # Set y-limits to be symmetric around zero and same for all plots in the row
+            ax.set_ylim(-1.1, 1.1)
+
+            if ann_idx == 0 and i == n_channels // 2:
+                ax.set_ylabel('Normalized Amplitude')
+    plt.tight_layout()
+    plt.savefig(fr"{project_folder}/results/{participant_ID}_{session_number}_ICA_plot.png", dpi=300)
+    plt.close()
 
 
 def plot_correlations_barplot(Y_pred, Y_test, project_folder):
