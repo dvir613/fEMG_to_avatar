@@ -99,7 +99,6 @@ def prepare_relevant_data(data, emg_file, fs, trials_lst_timing, events_timings=
 
 def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_flag=False, rand_lst=None, events_timings=None,
                               segments_length=35, norm=None, averaging="RMS"):
-    data_is_ICA = False
     fs = int(fs)
     relevant_data_train = []
     relevant_data_test = []
@@ -130,8 +129,6 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
                     else:
                         relevant_data_train.append(sliding_window(current_facial_expressions, method=averaging, fs=fs))
 
-    relevant_data_train = np.concatenate(relevant_data_train, axis=1)
-    relevant_data_test = np.concatenate(relevant_data_test, axis=1)
 
     return relevant_data_train, relevant_data_test, rand_lst, test_data_timing
 
@@ -146,9 +143,6 @@ def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant
 
     relevant_data_train_avatar, relevant_data_test_avatar, rand_lst ,test_data_timing =  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, for_plot_flag, rand_lst, events_timings=events_timings,
                                                            segments_length=segments_length, norm=norm, averaging=averaging)
-    # save only the same trials as the emg data
-    relevant_data_train_avatar = relevant_data_train_avatar[:, :relevant_data_train_emg.shape[1]]
-    relevant_data_test_avatar = relevant_data_test_avatar[:, :relevant_data_test_emg.shape[1]]
     return relevant_data_train_avatar, relevant_data_test_avatar
 
 
