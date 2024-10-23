@@ -708,6 +708,40 @@ def filter_and_rescale(predictions, filter_method='mean', filter_window=3,
     return min_val + (max_val - min_val) * (filtered - filtered.min()) / (
             filtered.max() - filtered.min())
 
+def split_concatenated_array(concatenated_array, original_lengths):
+    """
+    Split a concatenated numpy array back into a list of arrays based on original lengths.
+
+    Parameters:
+    concatenated_array (np.ndarray): The concatenated array
+    original_lengths (list): List of original lengths of the arrays
+
+    Returns:
+    list: List of numpy arrays with original lengths
+    """
+    # Verify input dimensions
+    total_length = sum(original_lengths)
+    if concatenated_array.shape[1] != total_length:
+        raise ValueError(f"Concatenated array length ({concatenated_array.shape[1]}) "
+                         f"doesn't match sum of original lengths ({total_length})")
+
+    # Initialize result list
+    split_arrays = []
+
+    # Keep track of current position
+    current_pos = 0
+
+    # Split the array based on the original lengths
+    for length in original_lengths:
+        # Extract the subset of columns for this array
+        split_array = concatenated_array[:, current_pos:current_pos + length]
+        split_arrays.append(split_array)
+
+        # Update the position
+        current_pos += length
+
+    return split_arrays
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
@@ -715,7 +749,7 @@ def main():
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
-    parser.add_argument("--plot_ica", action="store_true", default=True, help="Plot ICA flag")
+    parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
@@ -1004,11 +1038,19 @@ def main():
                     # Reset performance_results for the next session
                     performance_results = []
 
-                plot_predictions_vs_avatar(Y_pred, relevant_data_test_avatar.T, blendshapes, annotations_list,
-                                           test_data_timing, project_folder)
-                plot_correlations_barplot(Y_pred, relevant_data_test_avatar.T, project_folder)
+                original_lengths_ground_truth = [arr.shape[1] for arr in relevant_data_test_avatar]
+
+                Y_test = scaler_Y.inverse_transform(Y_test.cpu().numpy())
+
+                ground_truth = split_concatenated_array(Y_test.T, original_lengths_ground_truth)
+
+                predictions = split_concatenated_array(Y_pred.T, original_lengths_ground_truth)
+
+                plot_prediction_vs_GT(annotations_list, 6, participant_ID, ground_truth, predictions, session_number,
+                                      test_data_timing)
+
+                plot_correlations_barplot(Y_pred, Y_test, project_folder)
                 # convert the test values to the original scale
-                Y_test = relevant_data_test_avatar.T
                 # Save avatar data (existing code)
                 avatar_sliding_window_method = "RMS"
                 path = os.path.join(session_folder_path,
@@ -1102,6 +1144,92 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
                 ax.set_ylabel('Normalized Amplitude')
     plt.tight_layout()
     plt.savefig(fr"{project_folder}/results/{participant_ID}_{session_number}_ICA_plot.png", dpi=300)
+    plt.close()
+
+def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth_list, predictions_list, session_number,
+             test_data_timing):
+    """
+    Plot ground truth vs predictions for AU components with correlation-based selection
+    Parameters:
+    -----------
+    ground_truth_list: list of numpy arrays
+        List of ground truth signals for each annotation
+    predictions_list: list of numpy arrays
+        List of predicted signals for each annotation
+    """
+    n_channels = len(ground_truth_list[0])
+    n_annotations = len(annotations_list)
+    start_times = np.array(test_data_timing)[:, 0] * emg_fs
+    end_times = np.array(test_data_timing)[:, 1] * emg_fs
+    # Calculate correlations for each channel
+    correlations = []
+    for ch_idx in range(n_channels):
+        # Concatenate all annotations for this channel
+        gt_concat = np.concatenate([ground_truth_list[ann_idx][ch_idx] for ann_idx in range(n_annotations)])
+        pred_concat = np.concatenate([predictions_list[ann_idx][ch_idx] for ann_idx in range(n_annotations)])
+        corr, _ = pearsonr(gt_concat, pred_concat)
+        correlations.append((ch_idx, corr))
+    # Sort channels by correlation and take top 16
+    correlations.sort(key=lambda x: x[1], reverse=True)
+    top_channels = [x[0] for x in correlations[:16]]
+    n_rows = 16  # Show only top 16 channels
+    n_cols = n_annotations
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_rows // 2, n_cols), dpi=300)
+    # Normalize each row by its maximum value
+    for row_idx, ch_idx in enumerate(top_channels):
+        row_max = 0
+        # Find max value across all annotations for this channel
+        for ann_idx in range(n_annotations):
+            gt_signal = ground_truth_list[ann_idx][ch_idx]
+            pred_signal = predictions_list[ann_idx][ch_idx]
+            row_max = max(row_max, np.max(np.abs(gt_signal)), np.max(np.abs(pred_signal)))
+        for ann_idx in range(n_annotations):
+            ax = axs[row_idx, ann_idx]
+            # Get and normalize signals
+            gt_signal = ground_truth_list[ann_idx][ch_idx] / row_max
+            pred_signal = predictions_list[ann_idx][ch_idx] / row_max
+            start_time = float(start_times[ann_idx])
+            end_time = float(end_times[ann_idx])
+            x = np.linspace(start_time, end_time, len(gt_signal))
+            # Plot with increased line width
+            ax.plot(x, pred_signal, 'b-', linewidth=1.5, label='Predictions')
+            ax.plot(x, gt_signal, 'r--', linewidth=1.5, label='Ground Truth')
+            if row_idx == 0:
+                ax.set_title(annotations_list[ann_idx][2:].replace("_", " "), rotation=90, pad=10)
+            if ann_idx == n_annotations - 1:
+                corr_value = correlations[row_idx][1]
+                ax.text(1.15, 0.5, f'AU {ch_idx + 1}',
+                        transform=ax.transAxes,
+                        verticalalignment='center',
+                        horizontalalignment='left',
+                        fontweight='bold')
+            ax.set_yticks([])
+            if row_idx == n_rows - 1:
+                ax.set_xticks([start_time, end_time])
+                ax.set_xticklabels([f"{int(start_time / emg_fs)}", f"{int(end_time / emg_fs)}"],
+                                   rotation=90)
+                if ann_idx == n_annotations // 2:
+                    ax.set_xlabel('Time (s)')
+                else:
+                    ax.set_xlabel('')
+            else:
+                ax.set_xticks([])
+                ax.set_xticklabels([])
+            ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            if row_idx != n_rows - 1:
+                ax.spines['bottom'].set_visible(False)
+            time_range = end_time - start_time
+            padding = time_range * 0.05
+            ax.set_xlim(start_time - padding, end_time + padding)
+            ax.set_ylim(-1.1, 1.1)
+            # if row_idx == 0 and ann_idx == 0:
+            #     ax.legend(bbox_to_anchor=(1.05, 1.2))
+            if ann_idx == 0 and row_idx == n_rows // 2:
+                ax.set_ylabel('Normalized Amplitude')
+    plt.tight_layout()
+    plt.savefig(fr"{project_folder}/results/{participant_ID}_{session_number}_predictions_vs_ground_truth.png")
     plt.close()
 
 
