@@ -945,12 +945,12 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
         correlations.append(corr)
 
     # Create figure
-    plt.figure(figsize=(10, 12), dpi=300)
-    plt.rcParams.update({'font.size': 26})
+    plt.figure(figsize=(4, 5), dpi=300)
+    plt.rcParams.update({'font.size': 8})
 
     # Create horizontal barplot
-    y_pos = np.arange(len(correlations)) * 1.2  # Multiply by 1.2 for spacing between bars
-    bars = plt.barh(y_pos, correlations, height=0.8)  # Height < 1 creates space between bars
+    y_pos = np.arange(len(correlations)) * 1.8  # Multiply by 1.2 for spacing between bars
+    bars = plt.barh(y_pos, correlations, height=0.6)  # Height < 1 creates space between bars
 
     # Customize bars with colors
     for idx, bar in enumerate(bars):
@@ -963,8 +963,8 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
     plt.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
 
     # Set labels
-    plt.xlabel('Correlation Coefficient', fontsize=34)
-    plt.ylabel('Action Unit', fontsize=34)
+    plt.xlabel('Correlation Coefficient', fontsize=12)
+    plt.ylabel('Action Unit', fontsize=12)
 
     # Add grid
     plt.grid(True, axis='x', linestyle='--', alpha=0.3)
@@ -975,8 +975,8 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
     plt.xlim(min_corr, max_corr)
 
     # Set y-axis limits and ticks
-    plt.yticks(y_pos, range(1, len(correlations) + 1), fontsize=24)
-    plt.ylim(min(y_pos) - 0.6, max(y_pos) + 0.6)  # Adjust limits to remove extra space
+    plt.yticks(y_pos, range(1, len(correlations) + 1), fontsize=8)
+    plt.ylim(min(y_pos) - 1, max(y_pos) + 1)  # Adjust limits to remove extra space
 
     # Move x-axis to top
     ax = plt.gca()
@@ -993,7 +993,6 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
     # Save plot
     plt.savefig(fr"{project_folder}\results\correlations_barplot.png", bbox_inches='tight')
     plt.close()
-
 
 
 def plot_predictions_vs_avatar(Y_pred, Y_test, blendshapes, annotations_list, test_data_timing, project_folder):
