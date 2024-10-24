@@ -745,11 +745,11 @@ def split_concatenated_array(concatenated_array, original_lengths):
 
 def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
-    parser.add_argument("--data_path", default=fr"C:\Users\Hila\OneDrive\מסמכים\fEMG_to_avatar\data", help="Path to data directory")
+    parser.add_argument("--data_path", default=fr"C:\Users\YH006_new\fEMG_to_avatar\data", help="Path to data directory")
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
-    parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
+    parser.add_argument("--plot_ica", action="store_true", default=True, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
@@ -1072,10 +1072,18 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
     n_annotations = len(annotations_list)
     n_rows = n_channels
     n_cols = n_annotations
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(n_rows // 2, n_cols))
+
+    # Modified subplot creation with gridspec
+    fig = plt.figure(figsize=(n_rows // 2.5, n_cols),dpi=300)
+    # gs = fig.add_gridspec(n_rows, n_cols, hspace=0.0, wspace=0.2)  # Reduced wspace
+    gs = fig.add_gridspec(n_rows, n_cols)  # Reduced wspace
+
+    axs = gs.subplots()
+
     # Reverse the channel order for plotting
     channel_indices = list(range(n_channels))[::-1]
-    # First, calculate the maximum absolute value for each row (channel)
+
+    # Calculate the maximum absolute value for each row (channel)
     max_values_per_channel = np.zeros(n_channels)
     for i, ch_idx in enumerate(channel_indices):
         max_val = 0
@@ -1084,42 +1092,42 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
             current_max = np.max(np.abs(signal))
             max_val = max(max_val, current_max)
         max_values_per_channel[i] = max_val
-    # Now plot the normalized signals
+
+    # Plot the normalized signals
     for i, ch_idx in enumerate(channel_indices):
         for ann_idx in range(n_annotations):
             ax = axs[i, ann_idx]
             signal = signals_list[ann_idx][ch_idx]
 
-            # Normalize the signal by the maximum value for this channel
-            if max_values_per_channel[i] != 0:  # Avoid division by zero
+            # Normalize the signal
+            if max_values_per_channel[i] != 0:
                 signal = signal / max_values_per_channel[i]
 
             start_time = float(start_times[ann_idx])
             end_time = float(end_times[ann_idx])
             x = np.linspace(start_time, end_time, len(signal))
-            # Changed color from 'k-' to 'b-' and reduced linewidth from 1.0 to 0.8
             ax.plot(x, signal, 'b-', linewidth=0.8)
 
             if i == 0:
-                ax.set_title(annotations_list[ann_idx][2:].replace("_", " "), rotation=90, pad=10)
+                ax.set_title(annotations_list[ann_idx][2:].replace("_", " "),
+                             rotation=90, pad=10, fontsize=15)  # Reduced fontsize
 
             if ann_idx == n_annotations - 1:
-                ax.text(1.15, 0.5, channel_labels[ch_idx],
+                ax.text(1.02, 0.5, channel_labels[ch_idx],  # Reduced spacing
                         transform=ax.transAxes,
                         verticalalignment='center',
                         horizontalalignment='left',
+                        fontsize=12,  # Reduced fontsize
                         fontweight='bold')
 
             ax.set_yticks([])
 
             if i == n_channels - 1:
-                # Set two x-ticks at start and end times
                 ax.set_xticks([start_time, end_time])
-                # Convert to seconds and format as integers
                 ax.set_xticklabels([f"{int(start_time / emg_fs)}", f"{int(end_time / emg_fs)}"],
-                                   rotation=90)
+                                   rotation=90, fontsize=10)  # Reduced fontsize
                 if ann_idx == n_annotations // 2:
-                    ax.set_xlabel('Time (s)')
+                    ax.set_xlabel('Time (s)', fontsize=15)
                 else:
                     ax.set_xlabel('')
             else:
@@ -1134,16 +1142,17 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
                 ax.spines['bottom'].set_visible(False)
 
             time_range = end_time - start_time
-            padding = time_range * 0.05
+            padding = time_range * 0.02  # Reduced padding
             ax.set_xlim(start_time - padding, end_time + padding)
-
-            # Set y-limits to be symmetric around zero and same for all plots in the row
             ax.set_ylim(-1.1, 1.1)
 
             if ann_idx == 0 and i == n_channels // 2:
-                ax.set_ylabel('Normalized Amplitude')
-    plt.tight_layout()
-    plt.savefig(fr"{project_folder}/results/{participant_ID}_{session_number}_ICA_plot.png", dpi=300)
+                ax.set_ylabel('Normalized Amplitude', fontsize=15)
+
+    # Adjust layout with specific parameters
+    plt.tight_layout(pad=0.5, h_pad=0.1, w_pad=0.1)  # Reduced padding values
+    plt.savefig(fr"{project_folder}/results/{participant_ID}_{session_number}_ICA_plot.png",
+                dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth_list, predictions_list, session_number,
