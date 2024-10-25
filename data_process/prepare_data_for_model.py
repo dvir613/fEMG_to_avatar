@@ -97,8 +97,8 @@ def prepare_relevant_data(data, emg_file, fs, trials_lst_timing, events_timings=
     return relevant_data_train, relevant_data_test
 
 
-def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_flag=False, rand_lst=None, events_timings=None,
-                              segments_length=35, norm=None, averaging="RMS"):
+def prepare_relevant_data_new(data, fs, trials_lst_timing, rand_test, num_repetition, for_plot_flag=False, rand_lst=None,
+                              averaging="RMS"):
     fs = int(fs)
     relevant_data_train = []
     relevant_data_test = []
@@ -106,7 +106,10 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
 
     if rand_lst is None:
         num_groups = len(trials_lst_timing) // 3
-        rand_lst = np.random.choice(3, size=num_groups)  # Adjust rand_lst to be relative to each group
+        if rand_test:
+            rand_lst = np.random.choice(3, size=num_groups)  # Adjust rand_lst to be relative to each group
+        else:
+            rand_lst = np.array([num_repetition]*num_groups)
 
     for i, rand in enumerate(rand_lst):
         group_start = i * 3
@@ -133,7 +136,9 @@ def prepare_relevant_data_new(data, emg_file, fs, trials_lst_timing, for_plot_fl
     return relevant_data_train, relevant_data_test, rand_lst, test_data_timing
 
 
-def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant_data_train_emg, relevant_data_test_emg, trials_lst_timing, for_plot_flag, rand_lst, fs=60, events_timings=None, segments_length=35, norm=None, averaging="MEAN"):
+def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, trials_lst_timing, rand_test, num_repetition,
+                                 for_plot_flag, rand_lst,
+                                 fs=60, averaging="MEAN"):
     time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
     avatar_data = avatar_data.to_numpy().T
     print("original avatar data shape: ", avatar_data.shape)
@@ -141,8 +146,9 @@ def prepare_avatar_relevant_data(participant_ID, avatar_data, emg_file, relevant
     avatar_data = avatar_data[:, frames_to_cut:]
     print("avatar data cut shape: ", avatar_data.shape)
 
-    relevant_data_train_avatar, relevant_data_test_avatar, rand_lst ,test_data_timing =  prepare_relevant_data_new(avatar_data, emg_file, fs, trials_lst_timing, for_plot_flag, rand_lst, events_timings=events_timings,
-                                                           segments_length=segments_length, norm=norm, averaging=averaging)
+    relevant_data_train_avatar, relevant_data_test_avatar, rand_lst ,test_data_timing = prepare_relevant_data_new(
+        avatar_data, fs, trials_lst_timing, rand_test, num_repetition, for_plot_flag, rand_lst, averaging=averaging)
+
     return relevant_data_train_avatar, relevant_data_test_avatar
 
 
