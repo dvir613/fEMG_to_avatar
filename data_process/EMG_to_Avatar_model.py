@@ -271,8 +271,9 @@ def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, bes
     return model, train_losses, val_losses, val_outputs
 
 
-def plot_model_performance(train_losses, test_losses, dropout_rate=None):
-    plt.figure(figsize=(10, 10))
+def plot_model_performance(train_losses, test_losses, train_one_trial, trial_num, participant_ID, session_number,
+                           rand_test, num_repetition, dropout_rate=None):
+    plt.figure(figsize=(10, 10), dpi=100)
     plt.plot(train_losses, label='Training Loss')
     plt.plot(test_losses, label='Test Loss')
     plt.xlabel('Epochs')
@@ -281,8 +282,18 @@ def plot_model_performance(train_losses, test_losses, dropout_rate=None):
         plt.title(f'Model Performance with Dropout Rate: {dropout_rate}')
     else:
         plt.title('Model Performance')
+    fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_model_performance.png"
+    if train_one_trial:
+        fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_trial_{trial_num}_model_performance.png"
+        if not rand_test:
+            fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_trial_{trial_num}_repetition_{num_repetition+1}_model_performance.png"
+    else:
+        if not rand_test:
+            fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_repetition_{num_repetition+1}_model_performance.png"
+
     plt.legend()
-    plt.show()
+    plt.savefig(fig_path)
+    plt.close()
 
 
 def train_model(model, X_train, Y_train, X_test, Y_test, criterion, epochs=100, lr=0.01, device='cuda'):
@@ -743,7 +754,7 @@ def split_concatenated_array(concatenated_array, original_lengths):
     return split_arrays
 
 
-def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number, test_data_timing):
+def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number, test_data_timing, train_one_trial, trial_num):
     start_times = np.array(test_data_timing)[:, 0] * emg_fs
     end_times = np.array(test_data_timing)[:, 1] * emg_fs
     channel_labels = [f"ICA {i + 1}" for i in range(16)]
@@ -831,12 +842,14 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
 
     # Adjust layout with specific parameters
     plt.tight_layout(pad=0.5, h_pad=0.1, w_pad=0.1)  # Reduced padding values
-    plt.savefig(fr"{project_folder}/results/{participant_ID}_{session_number}_ICA_plot.png",
-                dpi=300, bbox_inches='tight')
+    fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_ICA_plot.png"
+    if train_one_trial:
+        fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_trial_{trial_num}_ICA_plot.png"
+    plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth_list, predictions_list, session_number,
-                          test_data_timing):
+                          test_data_timing, rand_test, num_repetition):
     """
     Plot ground truth vs predictions for AU components with correlation-based selection
     Parameters:
@@ -929,11 +942,13 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
                 ax.set_ylabel('Normalized Amplitude', fontsize=15)
 
     plt.tight_layout(pad=0.5, h_pad=0.1, w_pad=0.1)  # Reduced padding values
-    plt.savefig(fr"{project_folder}/results/{participant_ID}_{session_number}_predictions_vs_ground_truth.png", dpi=300,
-                bbox_inches='tight')
+    fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_predictions_vs_ground_truth.png"
+    if not rand_test:
+        fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_repetition_{num_repetition+1}_predictions_vs_ground_truth.png"
+    plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
 
-def plot_correlations_barplot(Y_pred, Y_test, project_folder):
+def plot_correlations_barplot(Y_pred, Y_test, project_folder, rand_test, num_repetition):
     """
     Create a horizontal barplot of correlations between predicted and ground truth values for each action unit,
     with proper bar spacing and visibility of negative values.
@@ -941,7 +956,7 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
     # Calculate correlations for all action units
     correlations = []
     for i in range(Y_test.shape[1]):
-        corr, _ = pearsonr(Y_pred[i], Y_test[i])
+        corr, _ = pearsonr(Y_pred[:,i], Y_test[:,i])
         correlations.append(corr)
 
     # Create figure
@@ -957,7 +972,7 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
         if correlations[idx] < 0:
             bar.set_color('red')
         else:
-            bar.set_color('#4989E5')  # Light blue color
+            bar.set_color('#ffb459')  # Light blue color
 
     # Customize plot
     plt.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
@@ -970,8 +985,8 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
     plt.grid(True, axis='x', linestyle='--', alpha=0.3)
 
     # Set x-axis limits to show negative values
-    min_corr = min(min(correlations) - 0.1, -0.1)  # Ensure we show at least to -0.1
-    max_corr = max(max(correlations) + 0.1, 1.0)   # Ensure we show at least to 1.0
+    min_corr = min(correlations)  # Ensure we show at least to -0.1
+    max_corr = max(max(correlations),1)   # Ensure we show at least to 1.0
     plt.xlim(min_corr, max_corr)
 
     # Set y-axis limits and ticks
@@ -991,7 +1006,10 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder):
     plt.subplots_adjust(top=0.85, left=0.15, right=0.95)
 
     # Save plot
-    plt.savefig(fr"{project_folder}\results\correlations_barplot.png", bbox_inches='tight')
+    fig_path = fr"{project_folder}\results\correlations_barplot.png"
+    if not rand_test:
+        fig_path = fr"{project_folder}\results\repetition_{num_repetition+1}_correlations_barplot.png"
+    plt.savefig(fig_path, bbox_inches='tight', dpi=300)
     plt.close()
 
 
@@ -1123,6 +1141,8 @@ def main():
     parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
+    parser.add_argument("--rand_test", default=True, help="Choose random repetition for test set")
+    parser.add_argument("--num_repetition", default=2, help="Index of repetition to choose for test set")
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
     parser.add_argument("--scale_data", action="store_true", default=True, help="Scale data flag")
     parser.add_argument("--train_models", action="store_true", default=False, help="Train models or load parameters flag")
@@ -1184,9 +1204,6 @@ def main():
                 # Prepare data for model (existing code)
                 annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
                                     '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
-                annotations_list_to_remove = ([f"{annot}_trial_1" for annot in annotations_list] +
-                                              [f"{annot}_trial_2" for annot in annotations_list] +
-                                              [f"{annot}_trial_3" for annot in annotations_list])
                 # print all the annotations that contains the strings in annotations_list
                 annotations_list_with_start_end = []
                 for annotation in emg_file.annotations.description:
@@ -1200,22 +1217,19 @@ def main():
                         if 'start' in annotation or 'end' in annotation:
                             if not 'Break' in annotation:
                                 if not 'Face_at_rest' in annotation:
-                                    annotations_list_with_start_end.append(annotation)
+                                    if not 'time' in annotation:
+                                        annotations_list_with_start_end.append(annotation)
                 events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
                 # make events_timings into a list with 10 lists that each contains the start and end of the annotation
                 events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
                 if args.ica_flag:
                     relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        ica_after_order, emg_file, emg_fs, events_timings, args.plot_ica,
-                        events_timings=events_timings,
-                        segments_length=args.segments_length, norm="ICA",
+                        ica_after_order, emg_fs, events_timings, args.rand_test, args.num_repetition, args.plot_ica,
                         averaging="RMS")
                 elif args.emg_flag:
                     relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        X_full, emg_file, emg_fs, events_timings, args.plot_ica,
-                        events_timings=events_timings,
-                        segments_length=args.segments_length, norm="ICA",
+                        X_full, emg_fs, events_timings, args.rand_test, args.num_repetition, args.plot_ica,
                         averaging="RMS")
                 # Load avatar data (existing code)
                 avatar_data = pd.read_csv(os.path.join(session_folder_path,
@@ -1225,18 +1239,16 @@ def main():
                 relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID,
                                                                                                      avatar_data,
                                                                                                      emg_file,
-                                                                                                     relevant_data_train_emg,
-                                                                                                     relevant_data_test_emg,
                                                                                                      events_timings,
-                                                                                                     args.plot_ica, rand_lst,
+                                                                                                     args.rand_test,
+                                                                                                     args.num_repetition,
+                                                                                                     args.plot_ica,
+                                                                                                     rand_lst,
                                                                                                      fs=60,
-                                                                                                     events_timings=events_timings,
-                                                                                                     segments_length=args.segments_length,
-                                                                                                     norm=None,
                                                                                                      averaging="RMS")
                 if args.plot_ica:
                     plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number,
-                             test_data_timing)
+                             test_data_timing, args.train_one_trial, args.trial_num)
 
                 X_train = np.concatenate(relevant_data_train_emg, axis=1)
                 X_test = np.concatenate(relevant_data_test_emg, axis=1)
@@ -1298,12 +1310,18 @@ def main():
                                                                                         args.criterion, args.Early_stopping,
                                                                                         model_name=
                                                                                         model_name)
-                        plot_model_performance(train_losses, test_losses)
+                        plot_model_performance(train_losses, test_losses, args.train_one_trial, args.trial_num,
+                                               participant_ID, session_number, args.rand_test, args.num_repetition)
                         #    save the model
                         model_path = os.path.join(session_folder_path,
                                                   f"{participant_ID}_{session_number}_blendshapes_{model_name}_{config}.joblib")
                         if args.train_one_trial:
                             model_path = model_path.replace(f'_{config}.joblib', f"_{args.trial_num}_{config}.joblib")
+                            if not args.rand_test:
+                                model_path = model_path.replace(f'_{args.trial_num}', f'_{args.trial_num}_repetition_{args.num_repetition+1}')
+                        else:
+                            if not args.rand_test:
+                                model_path = model_path.replace(f'_{config}.joblib', f"_{config}_repetition_{args.num_repetition+1}.joblib")
                         joblib.dump(best_model, model_path)
                         print(f"Model {model_name} for {config} saved as {model_path}")
 
@@ -1322,6 +1340,11 @@ def main():
                                                      f"{participant_ID}_{session_number}_predicted_blendshapes_{model_name}_{config}.csv")
                             if args.train_one_trial:
                                 pred_path = pred_path.replace(f'_{config}.csv', f"_{args.trial_num}_{config}.csv")
+                                if not args.rand_test:
+                                    pred_path = pred_path.replace(f'_{args.trial_num}', f'_{args.trial_num}_repetition_{args.num_repetition+1}')
+                            else:
+                                if not args.rand_test:
+                                    pred_path = pred_path.replace(f'_{config}.csv', f"_{config}_repetition_{args.num_repetition+1}.csv")
                             pd.DataFrame(Y_pred, columns=blendshapes).to_csv(pred_path)
                             print(f"Predicted data saved as {pred_path}")
 
@@ -1417,10 +1440,11 @@ def main():
 
                 predictions = split_concatenated_array(Y_pred.T, original_lengths_ground_truth)
 
-                plot_prediction_vs_GT(annotations_list, 6, participant_ID, ground_truth, predictions, session_number,
-                                      test_data_timing)
+                if args.train_one_trial:
+                    plot_prediction_vs_GT(annotations_list, 6, participant_ID, ground_truth, predictions, session_number,
+                                          test_data_timing, args.rand_test, args.num_repetition)
 
-                plot_correlations_barplot(Y_pred, Y_test, project_folder)
+                    plot_correlations_barplot(Y_pred, Y_test, project_folder, args.rand_test, args.num_repetition)
                 # convert the test values to the original scale
                 # Save avatar data (existing code)
                 avatar_sliding_window_method = "RMS"
@@ -1429,6 +1453,11 @@ def main():
                                  f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv")
                 if args.train_one_trial:
                     path = path.replace(f'.csv', f"_{args.trial_num}.csv")
+                    if not args.rand_test:
+                        path = path.replace(f'_{args.trial_num}', f'_{args.trial_num}_repetition_{args.num_repetition+1}')
+                else:
+                    if not args.rand_test:
+                        path = path.replace(f'.csv', f"_repetition_{args.num_repetition+1}.csv")
                 pd.DataFrame(Y_test, columns=blendshapes).to_csv(path)
 
                 print("Avatar data saved as CSV file.\n")
