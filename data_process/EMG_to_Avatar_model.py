@@ -273,24 +273,28 @@ def test_best_model(X_train, Y_train, X_test, Y_test, input_dim, output_dim, bes
 
 def plot_model_performance(train_losses, test_losses, train_one_trial, trial_num, participant_ID, session_number,
                            rand_test, num_repetition, dropout_rate=None):
-    plt.figure(figsize=(10, 10), dpi=100)
+    plt.figure(figsize=(4, 4), dpi=300)
+
+    plt.ylim(0, 0.6)  # This will ensure consistent y-axis across all runs
+
+    # Optionally, set specific tick locations for consistent tick labels
+    plt.yticks([i for i in np.arange(0,0.6,0.1)], fontsize=10)
+
     plt.plot(train_losses, label='Training Loss')
     plt.plot(test_losses, label='Test Loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    if dropout_rate is not None:
-        plt.title(f'Model Performance with Dropout Rate: {dropout_rate}')
-    else:
-        plt.title('Model Performance')
+    plt.xlabel('Epochs', fontsize=12)
+    plt.ylabel('Loss', fontsize=12)
     fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_model_performance.png"
     if train_one_trial:
-        fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_trial_{trial_num}_model_performance.png"
-        if not rand_test:
+        if rand_test:
+            fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_rand_test_trial_{trial_num}_model_performance.png"
+        else:
             fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_trial_{trial_num}_repetition_{num_repetition+1}_model_performance.png"
     else:
-        if not rand_test:
+        if rand_test:
+            fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_rand_test_model_performance.png"
+        else:
             fig_path = fr"{project_folder}\results\{participant_ID}_S{session_number}_repetition_{num_repetition+1}_model_performance.png"
-
     plt.legend()
     plt.savefig(fig_path)
     plt.close()
@@ -851,7 +855,7 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
 def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth_list, predictions_list, session_number,
                           test_data_timing, rand_test, num_repetition):
     """
-    Plot ground truth vs predictions for AU components with correlation-based selection
+    Plot ground truth vs predictions for AU components with index-based sorting
     Parameters:
     -----------
     ground_truth_list: list of numpy arrays
@@ -871,9 +875,14 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
         pred_concat = np.concatenate([predictions_list[ann_idx][ch_idx] for ann_idx in range(n_annotations)])
         corr, _ = pearsonr(gt_concat, pred_concat)
         correlations.append((ch_idx, corr))
-    # Sort channels by correlation and take top 16
+
+    # First sort by correlation to get top 16
     correlations.sort(key=lambda x: x[1], reverse=True)
     top_channels = [x[0] for x in correlations[:16]]
+
+    # Then sort these top channels by index
+    top_channels.sort(reverse=False)  # Sort in descending order to have lowest index at top
+
     n_rows = 16  # Show only top 16 channels
     n_cols = n_annotations
     fig = plt.figure(figsize=(n_rows // 2.5, n_cols), dpi=300)
@@ -903,7 +912,7 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
             if row_idx == 0:
                 ax.set_title(annotations_list[ann_idx][2:].replace("_", " "), rotation=90, pad=10, fontsize=15)
             if ann_idx == n_annotations - 1:
-                corr_value = correlations[row_idx][1]
+                corr_value = next(corr for idx, corr in correlations if idx == ch_idx)
                 ax.text(1.02, 0.5, f'AU {ch_idx + 1}',
                         transform=ax.transAxes,
                         verticalalignment='center',
@@ -944,9 +953,10 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
     plt.tight_layout(pad=0.5, h_pad=0.1, w_pad=0.1)  # Reduced padding values
     fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_predictions_vs_ground_truth.png"
     if not rand_test:
-        fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_repetition_{num_repetition+1}_predictions_vs_ground_truth.png"
+        fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_repetition_{num_repetition + 1}_predictions_vs_ground_truth.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
+
 
 def plot_correlations_barplot(Y_pred, Y_test, project_folder, rand_test, num_repetition):
     """
@@ -1142,7 +1152,7 @@ def main():
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--rand_test", default=True, help="Choose random repetition for test set")
-    parser.add_argument("--num_repetition", default=2, help="Index of repetition to choose for test set")
+    parser.add_argument("--num_repetition", default=1, help="Index of repetition to choose for test set")
     parser.add_argument("--save_results", action="store_true", default=True, help="Save results flag")
     parser.add_argument("--scale_data", action="store_true", default=True, help="Scale data flag")
     parser.add_argument("--train_models", action="store_true", default=False, help="Train models or load parameters flag")
@@ -1445,6 +1455,11 @@ def main():
                                           test_data_timing, args.rand_test, args.num_repetition)
 
                     plot_correlations_barplot(Y_pred, Y_test, project_folder, args.rand_test, args.num_repetition)
+                #   create a csv with blendshapes names and their index
+                blendshapes_dict = {blendshapes[i]: i for i in range(len(blendshapes))}
+                blendshapes_dict_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_dict.csv")
+                # save the dictionary as a csv file
+                pd.DataFrame.from_dict(blendshapes_dict, orient='index').to_csv(blendshapes_dict_path)
                 # convert the test values to the original scale
                 # Save avatar data (existing code)
                 avatar_sliding_window_method = "RMS"
