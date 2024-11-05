@@ -758,10 +758,14 @@ def split_concatenated_array(concatenated_array, original_lengths):
     return split_arrays
 
 
-def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number, test_data_timing, train_one_trial, trial_num):
+def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number, test_data_timing,
+             train_one_trial, trial_num, emg_flag):
     start_times = np.array(test_data_timing)[:, 0] * emg_fs
     end_times = np.array(test_data_timing)[:, 1] * emg_fs
-    channel_labels = [f"ICA {i + 1}" for i in range(16)]
+    if emg_flag:
+        channel_labels = [f"Ch-{i + 1}" for i in range(16)]
+    else:
+        channel_labels = [f"ICA {i + 1}" for i in range(16)]
     signals_list = relevant_data_test_emg
     n_channels = len(signals_list[0])
     n_annotations = len(annotations_list)
@@ -1148,7 +1152,7 @@ def main():
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
-    parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
+    parser.add_argument("--plot_ica", action="store_true", default=True, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--rand_test", default=True, help="Choose random repetition for test set")
@@ -1208,7 +1212,7 @@ def main():
                 if args.ica_flag:
                     X_full = ica_after_order
                 elif args.emg_flag:
-                    X_full = emg_file.get_data()
+                    X_full = emg_file.get_data()[:16, :]
                     X_full = filter_signal(X_full, emg_fs)
 
                 # Prepare data for model (existing code)
@@ -1258,7 +1262,7 @@ def main():
                                                                                                      averaging="RMS")
                 if args.plot_ica:
                     plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number,
-                             test_data_timing, args.train_one_trial, args.trial_num)
+                             test_data_timing, args.train_one_trial, args.trial_num, args.emg_flag)
 
                 X_train = np.concatenate(relevant_data_train_emg, axis=1)
                 X_test = np.concatenate(relevant_data_test_emg, axis=1)
