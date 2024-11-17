@@ -319,6 +319,8 @@ if __name__ == '__main__':
     data_path = fr"{project_folder}\data"
     for participant_folder in os.listdir(data_path):
         participant_ID = participant_folder
+        if participant_ID != 'participant_04':
+            continue
         participant_folder_path = fr'{data_path}\{participant_folder}'
         for session_folder in os.listdir(participant_folder_path):
             session_folder_path = fr'{participant_folder_path}\{session_folder}'

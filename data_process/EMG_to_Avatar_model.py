@@ -962,7 +962,7 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
     plt.close()
 
 
-def plot_correlations_barplot(Y_pred, Y_test, project_folder, rand_test, num_repetition):
+def plot_correlations_barplot(participant_ID, session_number, Y_pred, Y_test, project_folder, rand_test, num_repetition):
     """
     Create a horizontal barplot of correlations between predicted and ground truth values for each action unit,
     with proper bar spacing and visibility of negative values.
@@ -972,6 +972,9 @@ def plot_correlations_barplot(Y_pred, Y_test, project_folder, rand_test, num_rep
     for i in range(Y_test.shape[1]):
         corr, _ = pearsonr(Y_pred[:,i], Y_test[:,i])
         correlations.append(corr)
+    # save correlation values to a numpy array
+    np.save(f"{project_folder}/results/{participant_ID}_{session_number}_correlations.npy", correlations)
+
 
     # Create figure
     plt.figure(figsize=(4, 5), dpi=300)
@@ -1148,11 +1151,11 @@ def plot_ica_vs_blendshapes(annotations_list, test_data_timing, relevant_data_te
 
 def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
-    parser.add_argument("--data_path", default=fr"C:\Users\YH006_new\fEMG_to_avatar\data", help="Path to data directory")
+    parser.add_argument("--data_path", default=fr"C:\Users\Hila\OneDrive\מסמכים\fEMG_to_avatar\data", help="Path to data directory")
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
     parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
     parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
-    parser.add_argument("--plot_ica", action="store_true", default=True, help="Plot ICA flag")
+    parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
     parser.add_argument("--rand_test", default=True, help="Choose random repetition for test set")
@@ -1458,7 +1461,7 @@ def main():
                     plot_prediction_vs_GT(annotations_list, 6, participant_ID, ground_truth, predictions, session_number,
                                           test_data_timing, args.rand_test, args.num_repetition)
 
-                    plot_correlations_barplot(Y_pred, Y_test, project_folder, args.rand_test, args.num_repetition)
+                    plot_correlations_barplot(participant_ID, session_number, Y_pred, Y_test, project_folder, args.rand_test, args.num_repetition)
                 #   create a csv with blendshapes names and their index
                 blendshapes_dict = {blendshapes[i]: i for i in range(len(blendshapes))}
                 blendshapes_dict_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_dict.csv")
