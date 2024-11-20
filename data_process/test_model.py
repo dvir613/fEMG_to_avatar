@@ -70,11 +70,8 @@ def plot_correlations_comparison(participant1_ID, participant2_ID, session_numbe
         corr1, _ = pearsonr(Y_pred[:, i], Y_test[:, i])
         correlations1.append(corr1)
 
-    # Save correlation values
-    np.save(f"{project_folder}/results/{participant1_ID}_{session_number}_correlations.npy", correlations1)
-
     # Create figure
-    plt.figure(figsize=(6, 10), dpi=300)  # Increased height to accommodate separated bars
+    plt.figure(figsize=(4, 5), dpi=300)  # Increased height to accommodate separated bars
     plt.rcParams.update({'font.size': 8})
 
     # Create horizontal barplot with separated bars
@@ -92,9 +89,9 @@ def plot_correlations_comparison(participant1_ID, participant2_ID, session_numbe
     bars2 = plt.barh(y_pos2[1::2], correlations2, height=0.6,
                      label=f'Participant {participant2_ID}', color='#f54242')  # Red color
 
-    # Add legend
-    plt.legend(bbox_to_anchor=(0.5, 1.15), loc='center', ncol=2)
-
+    # Add legend below the plot
+    plt.legend(bbox_to_anchor=(0.5, 0), loc='upper center',
+              ncol=2, labels=[f'New participant', f'Model-Trained Participant'])
     # Customize plot
     plt.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
     plt.xlabel('Correlation Coefficient', fontsize=12)
@@ -133,7 +130,6 @@ def plot_correlations_comparison(participant1_ID, participant2_ID, session_numbe
     fig_path = fr"{project_folder}\results\correlations_comparison_barplot.png"
     plt.savefig(fig_path, bbox_inches='tight', dpi=300)
     plt.close()
-
 
 def test_cross_participant():
     # Load source model (participant_03)
