@@ -84,18 +84,18 @@ def plot_correlations_comparison(participant1_ID, participant2_ID, session_numbe
     # Create bars for both participants
     # Place participant 1's bars at even positions
     bars1 = plt.barh(y_pos1[::2], correlations1, height=0.6,
-                     label=f'Participant {participant1_ID}', color='#4287f5')  # Blue color
+                     label=f'Participant {participant1_ID}', color='#228B22')
     # Place participant 2's bars at odd positions
     bars2 = plt.barh(y_pos2[1::2], correlations2, height=0.6,
-                     label=f'Participant {participant2_ID}', color='#f54242')  # Red color
+                     label=f'Participant {participant2_ID}', color='#0000FF')
 
     # Add legend below the plot
     plt.legend(bbox_to_anchor=(0.5, 0), loc='upper center',
-              ncol=2, labels=[f'New participant', f'Model-Trained Participant'])
+              ncol=2, labels=[f'New participant', f'Model-Trained Participant'], fontsize=10)
     # Customize plot
     plt.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
-    plt.xlabel('Correlation Coefficient', fontsize=12)
-    plt.ylabel('Action Unit', fontsize=12)
+    plt.xlabel('Correlation Coefficient', fontsize=16)
+    plt.ylabel('Blendshape', fontsize=16)
     plt.grid(True, axis='x', linestyle='--', alpha=0.3)
 
     # Set axis limits
@@ -156,7 +156,7 @@ def test_cross_participant():
     # Load ICA data
     ica_data = extract_and_order_ica_data(target_participant, target_path, target_session)
 
-    # Load EEG data
+    # Load emg data
     edf_path = os.path.join(target_path, f"{target_participant}_{target_session}_edited.edf")
     emg_file = mne.io.read_raw_edf(edf_path, preload=True)
     emg_fs = emg_file.info['sfreq']
@@ -169,7 +169,7 @@ def test_cross_participant():
     annotations_list_with_start_end = []
     for annotation in emg_file.annotations.description:
         if ('trial_1' in annotation) and ('start' in annotation or 'end' in annotation):
-            if not ('Break' in annotation or 'Face_at_rest' in annotation):
+            if not ('Break' in annotation):
                 annotations_list_with_start_end.append(annotation)
 
     events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
@@ -198,11 +198,15 @@ def test_cross_participant():
     Y_test = Y_test.T
 
     # Scale data
-    scaler_X = StandardScaler()
-    scaler_Y = StandardScaler()
-
-    X_test = scaler_X.fit_transform(X_test)
-    Y_test = scaler_Y.fit_transform(Y_test)
+    loaded_scaler_X = joblib.load(fr"{project_folder}/results/scaler_X_{source_participant}_S1.joblib")
+    loaded_scaler_Y = joblib.load(fr"{project_folder}/results/scaler_Y_{source_participant}_S1.joblib")
+    X_test = loaded_scaler_X.transform(X_test)
+    Y_test = loaded_scaler_Y.transform(Y_test)
+    # scaler_X = StandardScaler()
+    # scaler_Y = StandardScaler()
+    #
+    # X_test = scaler_X.fit_transform(X_test)
+    # Y_test = scaler_Y.fit_transform(Y_test)
 
     # Convert to PyTorch tensors
     X_test = torch.FloatTensor(X_test).to(device)
@@ -215,8 +219,8 @@ def test_cross_participant():
 
     # Process predictions
     Y_pred = Y_pred.cpu().numpy()
-    Y_pred = scaler_Y.inverse_transform(Y_pred)
-    Y_test = scaler_Y.inverse_transform(Y_test.cpu().numpy())
+    Y_pred = loaded_scaler_Y.inverse_transform(Y_pred)
+    Y_test = loaded_scaler_Y.inverse_transform(Y_test.cpu().numpy())
 
 
     # load the correlation values from participant_03
@@ -234,9 +238,9 @@ def test_cross_participant():
     predictions_list = split_concatenated_array(Y_pred.T, original_lengths)
     ground_truth_list = split_concatenated_array(Y_test.T, original_lengths)
 
-    # Inverse transform the scaled data
-    Y_pred = scaler_Y.inverse_transform(Y_pred)
-    Y_test = scaler_Y.inverse_transform(Y_test)
+    # # Inverse transform the scaled data
+    # Y_pred = scaler_Y.inverse_transform(Y_pred)
+    # Y_test = scaler_Y.inverse_transform(Y_test)
 
     # Plot predictions vs ground truth
     plot_prediction_vs_GT(annotations_list, emg_fs, target_participant,

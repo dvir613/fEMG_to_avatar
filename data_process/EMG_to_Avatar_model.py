@@ -765,7 +765,7 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
     if emg_flag:
         channel_labels = [f"Ch-{i + 1}" for i in range(16)]
     else:
-        channel_labels = [f"ICA {i + 1}" for i in range(16)]
+        channel_labels = [f"IC {i + 1}" for i in range(16)]
     signals_list = relevant_data_test_emg
     n_channels = len(signals_list[0])
     n_annotations = len(annotations_list)
@@ -809,7 +809,7 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
 
             if i == 0:
                 ax.set_title(annotations_list[ann_idx][2:].replace("_", " "),
-                             rotation=90, pad=10, fontsize=15)  # Reduced fontsize
+                             rotation=90, pad=10, fontsize=16)  # Reduced fontsize
 
             if ann_idx == n_annotations - 1:
                 ax.text(1.02, 0.5, channel_labels[ch_idx],  # Reduced spacing
@@ -824,9 +824,9 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
             if i == n_channels - 1:
                 ax.set_xticks([start_time, end_time])
                 ax.set_xticklabels([f"{int(start_time / emg_fs)}", f"{int(end_time / emg_fs)}"],
-                                   rotation=90, fontsize=10)  # Reduced fontsize
+                                   rotation=90, fontsize=14)  # Reduced fontsize
                 if ann_idx == n_annotations // 2:
-                    ax.set_xlabel('Time (s)', fontsize=15)
+                    ax.set_xlabel('Time (s)', fontsize=16)
                 else:
                     ax.set_xlabel('')
             else:
@@ -846,7 +846,7 @@ def plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, s
             ax.set_ylim(-1.1, 1.1)
 
             if ann_idx == 0 and i == n_channels // 2:
-                ax.set_ylabel('Normalized Amplitude', fontsize=15)
+                ax.set_ylabel('Normalized Amplitude (a.u.)', fontsize=16)
 
     # Adjust layout with specific parameters
     plt.tight_layout(pad=0.5, h_pad=0.1, w_pad=0.1)  # Reduced padding values
@@ -914,10 +914,10 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
             ax.plot(x, pred_signal, 'b-', linewidth=1, label='Predictions')
             ax.plot(x, gt_signal, 'r--', linewidth=1, label='Ground Truth')
             if row_idx == 0:
-                ax.set_title(annotations_list[ann_idx][2:].replace("_", " "), rotation=90, pad=10, fontsize=15)
+                ax.set_title(annotations_list[ann_idx][2:].replace("_", " "), rotation=90, pad=10, fontsize=16)
             if ann_idx == n_annotations - 1:
                 corr_value = next(corr for idx, corr in correlations if idx == ch_idx)
-                ax.text(1.02, 0.5, f'AU {ch_idx + 1}',
+                ax.text(1.02, 0.5, f'BS {ch_idx + 1}',
                         transform=ax.transAxes,
                         verticalalignment='center',
                         horizontalalignment='left',
@@ -932,9 +932,9 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
                 # Only show start and end times
                 ax.set_xticks([start_time, end_time])
                 ax.set_xticklabels([f"{int(start_time / emg_fs)}", f"{int(end_time / emg_fs)}"],
-                                   rotation=90, fontsize=10)
+                                   rotation=90, fontsize=14)
                 if ann_idx == n_annotations // 2:
-                    ax.set_xlabel('Time (s)', fontsize=15)
+                    ax.set_xlabel('Time (s)', fontsize=16)
                 else:
                     ax.set_xlabel('')
             else:
@@ -952,7 +952,7 @@ def plot_prediction_vs_GT(annotations_list, emg_fs, participant_ID, ground_truth
             ax.set_ylim(-1.1, 1.1)
 
             if ann_idx == 0 and row_idx == n_rows // 2:
-                ax.set_ylabel('Normalized Amplitude', fontsize=15)
+                ax.set_ylabel('Normalized Amplitude (a.u.)', fontsize=16)
 
     plt.tight_layout(pad=0.5, h_pad=0.1, w_pad=0.1)  # Reduced padding values
     fig_path = fr"{project_folder}/results/{participant_ID}_{session_number}_predictions_vs_ground_truth.png"
@@ -995,8 +995,8 @@ def plot_correlations_barplot(participant_ID, session_number, Y_pred, Y_test, pr
     plt.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
 
     # Set labels
-    plt.xlabel('Correlation Coefficient', fontsize=12)
-    plt.ylabel('Action Unit', fontsize=12)
+    plt.xlabel('Correlation Coefficient', fontsize=16)
+    plt.ylabel('Blendshape', fontsize=16)
 
     # Add grid
     plt.grid(True, axis='x', linestyle='--', alpha=0.3)
@@ -1228,8 +1228,10 @@ def main():
                         if args.trial_num in annotation:
                             if 'start' in annotation or 'end' in annotation:
                                 if not 'Break' in annotation:
-                                    if not 'Face_at_rest' in annotation:
-                                        annotations_list_with_start_end.append(annotation)
+                                    # if not 'Face_at_rest' in annotation:
+                                    #     annotations_list_with_start_end.append(annotation)
+                                    annotations_list_with_start_end.append(annotation)
+
                     else:
                         if 'start' in annotation or 'end' in annotation:
                             if not 'Break' in annotation:
@@ -1289,6 +1291,9 @@ def main():
                     X_test = scaler_X.transform(X_test)
                     Y_train = scaler_Y.fit_transform(Y_train)
                     Y_test = scaler_Y.transform(Y_test)
+                #   save the scalers
+                    joblib.dump(scaler_X, fr"{project_folder}/results/scaler_X_{participant_ID}_{session_number}.joblib")
+                    joblib.dump(scaler_Y, fr"{project_folder}/results/scaler_Y_{participant_ID}_{session_number}.joblib")
 
                 if args.train_deep_learning_model:
                     # Convert to PyTorch tensors and move to the selected device
@@ -1303,7 +1308,7 @@ def main():
 
                     if args.train_linear_transform:
                         model_name = args.model_name
-                        path_to_best_params = fr"{project_folder}/results/best_params_{model_name}.json"
+                        path_to_best_params = fr"{project_folder}/results/participant_{participant_ID}_best_params_{model_name}.json"
                         if args.train_one_trial:
                             path_to_best_params = path_to_best_params.replace(f'.json', f"_{args.trial_num}.json")
                         if args.train_models:

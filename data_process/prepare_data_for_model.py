@@ -14,7 +14,7 @@ project_folder = os.path.abspath(os.path.join(script_dir, '..'))
 
 
 # window length and step length in seconds
-def sliding_window(data, method, fs, window_length=0.1):
+def sliding_window(data, method, fs, window_length=0.1, face_at_rest=None):
     window_size = int(window_length * fs)
 
     # Calculate number of windows
@@ -25,7 +25,15 @@ def sliding_window(data, method, fs, window_length=0.1):
     if method == "RMS":
         for i in range(data.shape[0]):
             for j in range(num_windows):
-                result[i, j] = np.sqrt(np.mean(np.power(data[i, j * window_size:j * window_size + window_size], 2)))
+                # normalizing by the RMS of the face at rest as a reference
+                if fs == 500:
+                    result[i, j] = np.sqrt(np.mean(np.power(data[i, j * window_size:j * window_size + window_size], 2))) / np.sqrt(
+                        np.mean(np.power(face_at_rest[i, :], 2)))
+                else:
+                    result[i, j] = np.sqrt(np.mean(np.power(data[i, j * window_size:j * window_size + window_size], 2)))
+    #             handling the case of devision by zero or infinity values
+        result[np.isnan(result)] = 0
+        result[np.isinf(result)] = 0
     if method == "MEAN":
         for i in range(data.shape[0]):
             for j in range(num_windows):
@@ -103,6 +111,11 @@ def prepare_relevant_data_new(data, fs, trials_lst_timing, rand_test, num_repeti
     relevant_data_train = []
     relevant_data_test = []
     test_data_timing = []
+    face_at_rest_start = int(trials_lst_timing[0][0] * fs)
+    face_at_rest_end = int(trials_lst_timing[0][0]* fs+0.1*fs)
+    face_at_rest = data[:, face_at_rest_start:face_at_rest_end]
+    # remove the face at rest from trials_lst_timing
+    trials_lst_timing = trials_lst_timing[1:]
 
     if rand_lst is None:
         num_groups = len(trials_lst_timing) // 3
@@ -121,7 +134,7 @@ def prepare_relevant_data_new(data, fs, trials_lst_timing, rand_test, num_repeti
                 relevant_data_test.append(current_facial_expressions)
                 test_data_timing.append(selected_trial)
             else:
-                relevant_data_test.append(sliding_window(current_facial_expressions, method=averaging, fs=fs))
+                relevant_data_test.append(sliding_window(current_facial_expressions, method=averaging, fs=fs, face_at_rest=face_at_rest))
                 test_data_timing.append(selected_trial)
 
             for j, trial in enumerate(group):
@@ -130,8 +143,7 @@ def prepare_relevant_data_new(data, fs, trials_lst_timing, rand_test, num_repeti
                     if for_plot_flag:
                         relevant_data_train.append(current_facial_expressions)
                     else:
-                        relevant_data_train.append(sliding_window(current_facial_expressions, method=averaging, fs=fs))
-
+                        relevant_data_train.append(sliding_window(current_facial_expressions, method=averaging, fs=fs, face_at_rest=face_at_rest))
 
     return relevant_data_train, relevant_data_test, rand_lst, test_data_timing
 
