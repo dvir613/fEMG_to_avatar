@@ -61,7 +61,7 @@ def prepare_data(participant_number, session_number, model, avaraging_method, st
 
 if __name__ == '__main__':
     # choose the participant number, session number, and model (as strings)
-    participant_number = '04'
+    participant_number = '03'
     session_number = '1'
     # LinearTransform_ICA
     # Autoencoder_ICA
