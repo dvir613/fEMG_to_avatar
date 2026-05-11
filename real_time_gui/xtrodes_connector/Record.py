@@ -1,7 +1,7 @@
 
 import datetime
-from RecordHolder import RecordsHolder
-from StreamedPacket import CommunicationConstants, RESPONSE_COMMANDS_TYPES
+from xtrodes_connector.RecordHolder import RecordsHolder
+from xtrodes_connector.StreamedPacket import CommunicationConstants, RESPONSE_COMMANDS_TYPES
 
 
 class Record:
@@ -183,7 +183,7 @@ def extract_a0_electrodes(buffer, index_of_record_type):
 
 def return_number_of_channels_sent(channel_mapping):
     return bin(channel_mapping).count('1')
-from RecordEvent import RecordEvent
+from xtrodes_connector.RecordEvent import RecordEvent
 
 def parse_payload_into_recordings(parsed_result, mapping_array_helper):
     buffer = parsed_result.parsed_result_bytes

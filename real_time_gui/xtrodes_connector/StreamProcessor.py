@@ -1,6 +1,6 @@
-from StreamedPacket import CommunicationConstants, Record
-from real_time_gui import ParsedResult
-from StreamedPacket import StreamPacket
+from xtrodes_connector.StreamedPacket import CommunicationConstants, Record
+import ParsedResult
+from xtrodes_connector.StreamedPacket import StreamPacket
 
 
 class StreamProcessor:

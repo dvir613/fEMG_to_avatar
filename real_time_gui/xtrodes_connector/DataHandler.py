@@ -2,8 +2,8 @@ import logging
 
 logging.basicConfig(level=logging.WARNING)
 import threading
-from ConnectionManager import ConnectionManager  # Adjust import path as needed
-from StreamProcessor import StreamProcessor, parse_stream_packet_into_records  # Adjust import path as needed
+from xtrodes_connector.ConnectionManager import ConnectionManager  # Adjust import path as needed
+from xtrodes_connector.StreamProcessor import StreamProcessor, parse_stream_packet_into_records  # Adjust import path as needed
 
 class DataHandler:
     def __init__(self, host, port,queue):

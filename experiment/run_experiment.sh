@@ -3,14 +3,9 @@
 
 LOOPBACK_CMD='CheckNetIsolation.exe LoopbackExempt -is -p=S-1-15-2-2022722280-4131399851-3337013219-4054732753-2439233258-3605005605-669734301'
 
-echo "Requesting admin privileges to set loopback exemption..."
-powershell.exe -Command "Start-Process cmd -ArgumentList '/c $LOOPBACK_CMD' -Verb RunAs -Wait"
+echo "Requesting admin privileges to set loopback exemption (running in background)..."
+powershell.exe -Command "Start-Process cmd -ArgumentList '/c $LOOPBACK_CMD' -Verb RunAs" &
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to set loopback exemption. Make sure you approved the UAC prompt."
-    exit 1
-fi
-
-echo "Loopback exemption set. Launching experiment..."
+echo "Launching experiment..."
 cd "$(dirname "$0")"
 python experiment.py
