@@ -10,12 +10,16 @@ import tkinter as tk
 from tkinter import ttk
 import os
 import subprocess
+from datetime import datetime
+import pyedflib
+from pylsl import StreamInfo, StreamOutlet, local_clock, cf_string
+
 
 mpl.use('TkAgg')
 
 from xtrodes_connector.DataHandler import DataHandler
 
-APP_VERSION = "1.0.4"  # Update this as needed
+APP_VERSION = "1.1.4"  # Update this as needed
 
 # App User Model ID for the "X-trodes PC App - Dev" UWP app.
 XTRODES_APP_ID = "Xtrodes.PC.BluetoothLE.DAU_0xzewdaf21npg!BluetoothLE.App"
@@ -32,6 +36,17 @@ last_factor_used = 1.0
 LOW_PASS_CUTOFF = 20  # Default cutoff frequency
 FILTER_ORDER = 5  # Default filter order
 
+EDF_SAVE_DIR = r"C:\Users\Hila\OneDrive\מסמכים\fEMG_to_avatar\Xtrodes EDF files"
+EDF_FLUSH_SECONDS = 300  # flush to disk every 5 minutes
+edf_writer = None
+edf_buffer = [[] for _ in range(16)]
+edf_samples_in_buffer = 0
+edf_recording = False
+edf_start_time = None
+edf_start_lsl_time = None
+lsl_outlet = None
+edf_total_samples_written = 0
+
 
 fig, axes = plt.subplots(NUMBER_OF_ROWS, NUMBER_OF_COLUMNS, figsize=(15, 10))
 lines = [ax.plot([], [])[0] for ax in axes.flatten()]
@@ -43,7 +58,7 @@ for i, ax in enumerate(axes.flatten()):
 
 original_data_x = [np.array([]) for _ in range(num_channels)]
 original_data_y = [np.array([]) for _ in range(num_channels)]
-sampling_rate = 250  # default
+sampling_rate = 500  # default
 
 CONFIG_FILE = 'config.txt'
 
@@ -66,10 +81,72 @@ def print_elapsed_time(start, label):
 def decimate_data(x_data, y_data, max_points):
     factor = max(1, len(x_data) // max_points)
     return x_data[::factor], y_data[::factor], factor
+def init_edf_writer(fs):
+    global edf_writer, edf_buffer, edf_samples_in_buffer, edf_start_time, edf_start_lsl_time, lsl_outlet, edf_total_samples_written
+    os.makedirs(EDF_SAVE_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = os.path.join(EDF_SAVE_DIR, f"recording_{timestamp}.edf")
+    edf_writer = pyedflib.EdfWriter(filename, num_channels, file_type=pyedflib.FILETYPE_EDFPLUS)
+    edf_start_lsl_time = local_clock()
+    edf_start_time = time.time()
+    info = StreamInfo('XtrodesMarkers', 'Markers', 1, 0, cf_string, 'xtrodes_markers_001')
+    lsl_outlet = StreamOutlet(info)
+    print("[LSL] Marker stream outlet created: XtrodesMarkers")
+    ch_headers = [{
+        'label': f'Ch{i}',
+        'dimension': 'uV',
+        'sample_frequency': int(fs),
+        'physical_max': 32767.0,
+        'physical_min': -32768.0,
+        'digital_max': 32767,
+        'digital_min': -32768,
+        'prefilter': '',
+        'transducer': ''
+    } for i in range(num_channels)]
+    edf_writer.setSignalHeaders(ch_headers)
+    edf_buffer = [[] for _ in range(num_channels)]
+    edf_samples_in_buffer = 0
+    edf_total_samples_written = 0
+    print(f"[EDF] Recording started: {filename}")
+
+def flush_edf_buffer():
+    global edf_buffer, edf_samples_in_buffer, edf_total_samples_written
+    if edf_writer is None or edf_samples_in_buffer == 0:
+        return
+    data = [np.array(ch, dtype=np.float64) for ch in edf_buffer]
+    edf_writer.writeSamples(data)
+    edf_total_samples_written += len(data[0])
+    edf_buffer = [[] for _ in range(num_channels)]
+    edf_samples_in_buffer = 0
+    print(f"[EDF] Flushed to disk")
+
+def close_edf_writer():
+    global edf_writer, lsl_outlet, edf_start_lsl_time
+    if edf_writer is not None:
+        flush_edf_buffer()
+        edf_writer.close()
+        edf_writer = None
+        print("[EDF] File closed and saved.")
+    if lsl_outlet is not None:
+        del lsl_outlet
+        lsl_outlet = None
+        edf_start_lsl_time = None
+        print("[LSL] Marker stream closed.")
+
+def add_edf_annotation(description):
+    if edf_writer is None:
+        return
+    lsl_now = local_clock()
+    if lsl_outlet is not None:
+        lsl_outlet.push_sample([description], lsl_now)
+    # Compute onset from sample count — immune to packet loss and clock drift
+    onset = (edf_total_samples_written + len(edf_buffer[0])) / sampling_rate
+    edf_writer.writeAnnotation(onset, -1, description)
+    print(f"[EDF] Annotation at {onset:.3f}s: {description}")
+
 def process_data():
     """Function to process incoming data and update arrays without rendering on main window."""
-    global sampling_rate
-    global global_factor
+    global sampling_rate, global_factor, edf_recording, edf_writer, edf_buffer, edf_samples_in_buffer
 
     packets_to_process = []
     while packet_queue.qsize() > 1:
@@ -90,10 +167,19 @@ def process_data():
                         elif record.record_type in (0xa0,(0xa0 | 0x8)):
                             new_values_per_channel[i].extend(record.data_samples[i])
 
-        #factor = app.get_factor()
-
         if global_factor is not None:
             new_values_per_channel = [[y * global_factor for y in channel] for channel in new_values_per_channel]
+
+        # EDF: buffer the same scaled values shown on screen and flush periodically
+        if edf_recording and new_values_per_channel[0]:
+            if edf_writer is None:
+                init_edf_writer(sampling_rate)
+            if edf_writer is not None:
+                for i in range(num_channels):
+                    edf_buffer[i].extend(new_values_per_channel[i])
+                edf_samples_in_buffer += len(new_values_per_channel[0])
+                if edf_samples_in_buffer >= EDF_FLUSH_SECONDS * sampling_rate:
+                    flush_edf_buffer()
 
         for i in range(num_channels):
             if new_values_per_channel[i]:
@@ -274,6 +360,38 @@ class App(tk.Tk):
 
         self.button_autoscale_all = ttk.Button(self.scrollable_frame, text="Autoscale All", command=autoscale_all)
         self.button_autoscale_all.pack(pady=10, padx=10)
+
+        self.button_record = tk.Button(self.scrollable_frame, text="Start Recording",
+                                       bg="green", fg="white", font=("TkDefaultFont", 10, "bold"),
+                                       command=self.toggle_recording)
+        self.button_record.pack(pady=10, padx=10, fill=tk.X)
+
+        self.label_rec_timer = ttk.Label(self.scrollable_frame, text="", foreground="gray")
+        self.label_rec_timer.pack(pady=(0, 5), padx=10)
+        self._rec_timer_running = False
+
+        ttk.Separator(self.scrollable_frame, orient='horizontal').pack(fill=tk.X, padx=10, pady=(10, 5))
+        ttk.Label(self.scrollable_frame, text="Annotations:").pack(pady=(0, 5), padx=10, anchor='w')
+
+        preset_markers = ["Stimulation Start", "Stimulation End", "Blink", "Eye Open", "Eye Close"]
+        self.annotation_buttons = []
+        for label in preset_markers:
+            btn = ttk.Button(self.scrollable_frame, text=label,
+                             command=lambda l=label: add_edf_annotation(l),
+                             state='disabled')
+            btn.pack(pady=2, padx=10, fill=tk.X)
+            self.annotation_buttons.append(btn)
+
+        self.entry_annotation = ttk.Entry(self.scrollable_frame)
+        self.entry_annotation.pack(pady=(8, 2), padx=10, fill=tk.X)
+        self.entry_annotation.insert(0, "Custom note...")
+        self.entry_annotation.config(state='disabled')
+
+        self.button_mark = ttk.Button(self.scrollable_frame, text="Add Note",
+                                      command=self.add_custom_annotation, state='disabled')
+        self.button_mark.pack(pady=(2, 10), padx=10, fill=tk.X)
+
+        ttk.Separator(self.scrollable_frame, orient='horizontal').pack(fill=tk.X, padx=10, pady=(0, 10))
 
         self.label_window_size = ttk.Label(self.scrollable_frame, text="Signal length (Seconds):")
         self.label_window_size.pack(pady=(15, 5), padx=10, anchor='w')
@@ -883,11 +1001,61 @@ class App(tk.Tk):
         except ValueError:
             print("Invalid input for custom window size")
 
+    def toggle_recording(self):
+        global edf_recording
+        if not edf_recording:
+            edf_recording = True
+            self.button_record.config(text="Stop Recording", bg="red")
+            for btn in self.annotation_buttons:
+                btn.config(state='normal')
+            self.entry_annotation.config(state='normal')
+            self.entry_annotation.delete(0, tk.END)
+            self.button_mark.config(state='normal')
+            self._rec_timer_running = True
+            self._rec_start = time.time()
+            self._update_recording_timer()
+            print("[EDF] Recording started by user.")
+        else:
+            edf_recording = False
+            self._rec_timer_running = False
+            elapsed = time.time() - self._rec_start
+            close_edf_writer()
+            self.button_record.config(text="Start Recording", bg="green")
+            for btn in self.annotation_buttons:
+                btn.config(state='disabled')
+            self.entry_annotation.config(state='disabled')
+            self.entry_annotation.delete(0, tk.END)
+            self.entry_annotation.insert(0, "Custom note...")
+            self.button_mark.config(state='disabled')
+            h, rem = divmod(int(elapsed), 3600)
+            m, s = divmod(rem, 60)
+            self.label_rec_timer.config(
+                text=f"Last recording: {h:02d}:{m:02d}:{s:02d}", foreground="gray"
+            )
+            print("[EDF] Recording stopped by user.")
+
+    def _update_recording_timer(self):
+        if not self._rec_timer_running:
+            return
+        elapsed = time.time() - self._rec_start
+        h, rem = divmod(int(elapsed), 3600)
+        m, s = divmod(rem, 60)
+        self.label_rec_timer.config(
+            text=f"REC  {h:02d}:{m:02d}:{s:02d}", foreground="red"
+        )
+        self.after(1000, self._update_recording_timer)
+
+    def add_custom_annotation(self):
+        text = self.entry_annotation.get().strip()
+        if text:
+            add_edf_annotation(text)
+
     def on_closing(self):
         if self.data_handler:
             self.data_handler.stop()  # Ensure the data handler stops
         if hasattr(self, 'ani'):
             self.ani.event_source.stop()  # Stop the animation
+        close_edf_writer()
         shutdown_external_apps()
         self.quit()
         self.destroy()
@@ -980,18 +1148,11 @@ if __name__ == "__main__":
     # Step 1: Launch X-trodes PC App - Dev
     launch_xtrodes_app()
 
-    # Step 2: Wait for a stable data stream before proceeding
-    _host, _port, _ = load_config()
-    if _host and _port:
-        wait_for_stable_stream(_host, _port)
-    else:
-        print("[Startup] No saved host/port — skipping stream stability check.")
-
-    # Step 3: Run checknetisolation
+    # Step 2: Run checknetisolation in background — no need to block GUI startup
     bat_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checknetisolation.bat")
-    subprocess.run([bat_path], shell=True)
+    threading.Thread(target=lambda: subprocess.run([bat_path], shell=True), daemon=True).start()
 
-    # Step 4: Launch main visualization app
+    # Step 3: Launch main visualization app immediately
     mpl.rcParams['path.simplify'] = True
     mpl.rcParams['path.simplify_threshold'] = 1.0
 

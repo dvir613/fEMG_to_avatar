@@ -385,12 +385,12 @@ if __name__ == '__main__':
 
     launch_xtrodes_app()
 
-    # Run loopback exemption before opening any TCP connection to the BLE app
-    bat_path = os.path.join(
+    # Run loopback exemption in background — doesn't need to complete before streaming starts
+    bat_path = os.path.normpath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         '..', 'real_time_gui', 'checknetisolation.bat'
-    )
-    subprocess.run([os.path.normpath(bat_path)], shell=True)
+    ))
+    threading.Thread(target=lambda: subprocess.run([bat_path], shell=True), daemon=True).start()
 
     wait_for_stable_stream("127.0.0.1", 20001)
 
@@ -459,7 +459,7 @@ if __name__ == '__main__':
         print("[Annotation] Start recording")
 
         play_videos(directory, n_reps)
-        free_behavior()
+        # free_behavior()
 
         print("[Annotation] stop_recording")
         gui_proc.wait()
