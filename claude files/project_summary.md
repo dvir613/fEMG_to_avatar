@@ -51,7 +51,7 @@ Predict Facial Action Units (blendshapes) from facial surface EMG (fEMG) recorde
 ### For real-time visualization:
 7. **Xtrodes BLE app** — start streaming
 8. **Unity ICTFace_Avatars** — open and play (waits for TCP connection on port 65432)
-9. **`control_avatar/send_live_to_CS.py`** — connects to DAU, loads W_eff + model + scalers, starts inference loop
+9. **`control_avatar/send_live_to_CS.py`** — connects to DAU, loads model + scalers + atlas, runs full ICA pipeline per chunk, starts inference loop
 
 ---
 
@@ -60,18 +60,23 @@ Predict Facial Action Units (blendshapes) from facial surface EMG (fEMG) recorde
 `control_avatar/send_live_to_CS.py` is implemented. It:
 
 1. **Loads pre-trained artifacts** from the calibration session:
-   - `W_eff.npy` — composed unmixing matrix (= `W @ whiteM_calib`)
-   - `electrode_order.npy` — component-to-muscle mapping
    - `model.joblib` — PyTorch `ImprovedEnhancedTransformNet`
    - `scaler_X.joblib`, `scaler_Y.joblib`
+   - **Atlas** (`data_process/atlas/`): 17 cluster centroids, threshold, electrode coordinates, face image grid — used for per-chunk ICA component classification
 
 2. **Receives EMG** using `DataHandler`, accumulates into a ring buffer (2 seconds, 16 channels) on a background thread
 
-3. **Every 50ms (20 FPS)**, runs inference:
+3. **Every 50ms (20 FPS)**, runs inference replicating the full calibration pipeline:
    ```
-   filter_signal(last 1s of buffer)     ← notch + bandpass, same as calibration
-   W_eff @ filtered_chunk               ← apply fixed unmixing operator
-   reorder by electrode_order
+   filter_signal(last 1s of buffer)     ← notch + bandpass
+   _denoise_chunk()                     ← wavelet thresholding (db15) on full context
+   center()                             ← zero-mean per channel
+   whiten()                             ← sphering (SVD-based)
+   picard(max_iter=50)                  ← ICA: produces W (16×16) and Y (16×T)
+   _classify_rt(W, atlas)               ← interpolate |inv(W)| onto face grid,
+                                           match each component to closest muscle centroid
+                                           → electrode_order
+   reorder Y by electrode_order
    normalize_ica_data()
    RMS over last 100ms window           ← matches window_length=0.1 used in training
    scaler_X.transform()
@@ -92,26 +97,22 @@ Predict Facial Action Units (blendshapes) from facial surface EMG (fEMG) recorde
 **Answer:** `data_process/extract_Live_Capture_recorded_Data.py` already handles this. It parses the `.anim` file (blend shape curves) and the `.asset` file (recording start time), fills in missing frames, interpolates, and outputs a timestamped CSV. This is the file that `prepare_data_for_model.py` reads.
 
 ### Q3: Can you apply the calibration W matrix to new real-time chunks?
-**Answer:** Yes, but not by applying `W` alone. The PICARD ICA was run on data that was already whitened with a whitening matrix `whiteM_calib` computed from the calibration recording. So `W` was designed to unmix whitened data. The correct operator for raw data is:
-```
-W_eff = W @ whiteM_calib
-```
-This `W_eff` is the actual inverse of the physical mixing matrix A (determined by electrode geometry, which is fixed). It should be computed and saved during calibration, and applied directly to filtered real-time chunks.
+**Answer (original approach):** Yes via `W_eff = W @ whiteM_calib` — a fixed linear operator applied directly to filtered chunks, with no re-whitening.
+
+**Current approach:** The script no longer uses a pre-saved W. Instead it re-runs the full ICA pipeline (center → whiten → PICARD) on every chunk and re-classifies components via the atlas each frame. This matches the calibration preprocessing exactly at the cost of higher per-frame compute (see Q5).
 
 ### Q4: Should you re-whiten each real-time chunk?
-**Answer:** No — this is wrong. If you compute a new whitening matrix per chunk, you project the chunk into a different coordinate system than W was calibrated for. Applying W to a differently-whitened chunk gives components that no longer correspond to the same muscles. You would need to re-run PICARD (minutes of computation) to get a valid W for each new whitening. The whole point of calibration is that `W_eff` is a fixed linear operator (the physical inverse mixing matrix). Apply it directly.
+**Answer (original debate):** Re-whitening per chunk was considered incorrect because it projects each chunk into a different coordinate system than W was calibrated for, requiring PICARD to be re-run anyway.
+
+**Current approach:** The script now does re-whiten and re-run PICARD on each chunk, so the W and Y are fresh each frame and component classification is done via atlas matching rather than relying on a fixed `electrode_order`. This avoids the fixed-W calibration/drift mismatch at the cost of speed.
 
 ### Q5: What about wavelet denoising in real-time?
-**Answer:** Wavelet denoising cannot be done in real-time without introducing unacceptable latency. The reason is not speed — it is boundary artifacts. The calibration code processes 10-second windows (e.g., 8000 samples at 800Hz). The db15 wavelet at level 5 has a boundary influence of ~960 samples inward from each edge; with 8000 samples only ~12% of the window is contaminated. In real-time you have at most 1 second of context (500 samples at 500Hz), so ~38% of the window is corrupted. Running denoising on a short window makes the signal worse, not better. To use denoising without artifacts you would need to hold back ~5 seconds of data until it is in the "safe" center of a longer window, making the system unacceptably laggy.
+**Original concern:** Boundary artifacts — with only 1 second of context (500 samples at 500Hz), db15 at level 5 corrupts ~38% of the window. Running denoising on a short window may make the signal worse.
 
-**The correct fix** is to match the calibration preprocessing to what real-time can actually reproduce:
-- Remove wavelet denoising from `classifying_ica_components.py:perform_ica_algorithm` (the bandpass filter 35–249Hz already handles the main artifacts it was targeting)
-- Also remove the downsample-to-800Hz step (`down_sample_flag=False`) so W_eff is computed on 500Hz data matching the real-time device rate
-- Retrain the ML model after re-running ICA calibration with these changes
+**Current approach:** The script applies wavelet thresholding to the full 1-second context window as a single block (`_denoise_chunk`). Boundary artifact contamination exists but is accepted as a trade-off; if results are poor this step can be removed and calibration re-run without denoising (bandpass 35–249Hz already suppresses the main artifacts).
 
-This eliminates the two main calibration/inference mismatches: sampling rate and denoising. `send_live_to_CS.py` needs no changes — its pipeline already matches what calibration will produce after this fix.
-
-**Why 250Hz is not a good alternative:** The bandpass filter passes 35–249Hz. At 250Hz the Nyquist is 125Hz, cutting off the top half of the EMG frequency band. It would require changing the filter design and would lose meaningful signal.
+### Q6 (formerly Q5 note): Performance budget
+Running PICARD (`max_iter=50`) + 16× `griddata` atlas classification at 20 Hz is compute-intensive. If inference exceeds 50 ms per frame, reduce `SEND_HZ` or lower `ICA_MAX_ITER` further. The `_classify_rt` griddata calls dominate; pre-computing the Delaunay triangulation could speed this up significantly.
 
 ### Q6: What window size should real-time RMS use?
 **Answer:** 100ms (50 samples at 500 Hz), matching the `window_length=0.1` used in `sliding_window()` during training. Using a different window size would give the model a different feature distribution than it was trained on.
@@ -122,18 +123,22 @@ This eliminates the two main calibration/inference mismatches: sampling rate and
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `W.npy` | `data/participantXX/SX/` | Raw PICARD unmixing matrix |
-| `whiteM_calib.npy` | `data/participantXX/SX/` | Calibration whitening matrix |
-| `W_eff.npy` | `data/participantXX/SX/` | Composed operator = W @ whiteM — used by real-time inference |
-| `electrode_order.npy` | `data/participantXX/SX/` | Maps ICA components to muscles |
+| `W.npy` | `data/participantXX/SX/` | Raw PICARD unmixing matrix (calibration only) |
+| `whiteM_calib.npy` | `data/participantXX/SX/` | Calibration whitening matrix (calibration only) |
+| `W_eff.npy` | `data/participantXX/SX/` | Composed operator = W @ whiteM (no longer used by real-time inference) |
+| `electrode_order.npy` | `data/participantXX/SX/` | Maps ICA components to muscles (no longer used by real-time inference) |
 | `*_blendshapes_ImprovedEnhancedTransformNet*.joblib` | `data/participantXX/SX/` | Trained PyTorch model |
 | `scaler_X_*.joblib` | `results/` | Input feature scaler |
 | `scaler_Y_*.joblib` | `results/` | Output blendshape scaler |
+| `threshold.npy` | `data_process/atlas/` | Atlas classification distance threshold |
+| `cluster_1.npy` … `cluster_17.npy` | `data_process/atlas/` | Muscle atlas centroids (flattened face-image arrays) |
+| `side_x_coor.npy`, `side_y_coor.npy` | `data_process/atlas/` | Electrode coordinates for heatmap interpolation |
+| `side.jpg` | project root | Face image used to define the interpolation grid |
 
 ---
 
 ## What Still Needs to Be Done
 
-1. **Modify `classifying_ica_components.py:perform_ica_algorithm`** — remove the downsample-to-800Hz step and the wavelet denoising step so calibration runs at 500Hz on bandpass-filtered data only (matching what `send_live_to_CS.py` receives at inference time). `whiteM` and `W_eff` are already saved.
-2. **Retrain** — re-run calibration (`classifying_ica_components.py`) and training (`EMG_to_Avatar_model.py`) after the above change to produce a model and W_eff that match the real-time signal conditions.
+1. **Benchmark real-time performance** — PICARD + 16× `griddata` at 20 Hz may exceed the 50 ms budget. Profile `_classify_rt` and tune `ICA_MAX_ITER` or `SEND_HZ` as needed. Pre-computing the Delaunay triangulation (pass to `griddata` directly) is the fastest win.
+2. **Evaluate boundary artifact impact of `_denoise_chunk`** — with only 500 samples of context, db15 wavelet denoising corrupts ~38% of the window. If model accuracy is poor, remove `_denoise_chunk` from `infer` and re-run calibration without wavelet denoising so the training features match.
 3. **Test time synchronization** — between EDF start time and liveCapture `.asset` start time (already handled in `get_time_delta()` in `prepare_data_for_model.py`)

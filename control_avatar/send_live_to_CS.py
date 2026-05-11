@@ -24,11 +24,16 @@ Required in project root:
 """
 
 import os
+import subprocess
 import sys
 import socket
 import time
 import queue as _queue
 import threading
+import warnings
+
+warnings.filterwarnings('ignore', message='Level value.*too high')
+warnings.filterwarnings('ignore', message='Whiten is set to false')
 import numpy as np
 import pandas as pd
 import joblib
@@ -56,6 +61,8 @@ from data_process.prepare_data_for_model import normalize_ica_data
 from data_process.EMG_to_Avatar_model import ImprovedEnhancedTransformNet, EnhancedTransformNet, LinearTransformNet  # noqa: F401 — required for joblib/pickle to deserialize saved models
 from send_data_to_CS import fill_symetrical
 from CONSTS import mapping, blend_shapes, relevant_blendshapes
+
+XTRODES_APP_ID = "Xtrodes.PC.BluetoothLE.DAU_0xzewdaf21npg!BluetoothLE.App"
 
 # ── session config — edit these before each session ───────────────────────────
 PARTICIPANT_ID = 'participant_04'
@@ -180,6 +187,8 @@ def infer(ring_buf, atlas, model, scaler_X, scaler_Y):
 
     filter → wavelet denoise → center → whiten → PICARD ICA →
     atlas classify → reorder → normalize → RMS → scale → model
+
+    Falls back to RMS of filtered raw signal when PICARD does not converge.
     """
     context = ring_buf[:, -FILTER_CONTEXT:].copy()      # (16, FILTER_CONTEXT)
 
@@ -188,20 +197,25 @@ def infer(ring_buf, atlas, model, scaler_X, scaler_Y):
     centered, _ = center(denoised)                       # zero-mean per channel
     whitened, _ = whiten(centered)                       # sphering
 
-    _, W, Y = picard(whitened, n_components=NUM_CHANNELS,
-                     ortho=True, extended=True, whiten=False,
-                     max_iter=ICA_MAX_ITER)               # (16, FILTER_CONTEXT)
+    with warnings.catch_warnings(record=True) as _caught:
+        warnings.simplefilter('always')
+        _, W, Y = picard(whitened, n_components=NUM_CHANNELS,
+                         ortho=True, extended=True, whiten=False,
+                         max_iter=ICA_MAX_ITER)
 
-    electrode_order = _classify_rt(W, atlas)             # atlas muscle mapping
+    converged = not any('did not converge' in str(w.message) for w in _caught)
 
-    ica_ordered = np.zeros_like(Y)
-    for i, elec in enumerate(electrode_order):
-        if elec != 16:
-            ica_ordered[elec, :] = Y[i, :]
-
-    ica_ordered = normalize_ica_data(ica_ordered)
-
-    rms = np.sqrt(np.mean(ica_ordered[:, -RMS_WINDOW:] ** 2, axis=1))  # (16,)
+    if converged:
+        electrode_order = _classify_rt(W, atlas)         # atlas muscle mapping
+        ica_ordered = np.zeros_like(Y)
+        for i, elec in enumerate(electrode_order):
+            if elec != 16:
+                ica_ordered[elec, :] = Y[i, :]
+        ica_ordered = normalize_ica_data(ica_ordered)
+        rms = np.sqrt(np.mean(ica_ordered[:, -RMS_WINDOW:] ** 2, axis=1))  # (16,)
+    else:
+        print('[Infer] PICARD did not converge — using raw filtered RMS.', flush=True)
+        rms = np.sqrt(np.mean(filtered[:, -RMS_WINDOW:] ** 2, axis=1))      # (16,)
 
     x = scaler_X.transform(rms.reshape(1, -1))          # (1, 16)
     with torch.no_grad():
@@ -211,6 +225,56 @@ def infer(ring_buf, atlas, model, scaler_X, scaler_Y):
     df = pd.DataFrame(pred, columns=relevant_blendshapes)
     full = fill_symetrical(df, mapping, blend_shapes)    # (1, 50) numpy array
     return full[0].astype(np.float32)                    # (50,) float32
+
+
+def launch_xtrodes_app():
+    print('[Startup] Launching X-trodes PC App...')
+    subprocess.Popen(
+        ['powershell', '-Command', f'Start-Process "shell:AppsFolder\\{XTRODES_APP_ID}"']
+    )
+
+
+def wait_for_stable_stream(host, port, min_packets=3, stability_secs=1.0):
+    """Block until the X-trodes stream is flowing stably (mirrors experiment.py).
+    Phase 1: poll until the port is open.
+    Phase 2: briefly connect to confirm data packets are arriving."""
+    print('[Startup] Please click "Start Streaming" in the X-trodes app now.', flush=True)
+    print('[Startup] Waiting for X-trodes app to be ready', end='', flush=True)
+    while True:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                break
+        except (socket.error, OSError):
+            print('.', end='', flush=True)
+            time.sleep(0.15)
+
+    print('\n[Startup] App ready — checking data stream', end='', flush=True)
+    monitor_queue = _queue.Queue()
+    probe = DataHandler(host, port, monitor_queue)
+    threading.Thread(target=probe.start, daemon=True).start()
+
+    received = 0
+    stable_since = None
+    deadline = time.time() + 30
+    try:
+        while time.time() < deadline:
+            try:
+                monitor_queue.get(timeout=0.1)
+                received += 1
+                if stable_since is None:
+                    stable_since = time.time()
+                print('.', end='', flush=True)
+            except _queue.Empty:
+                pass
+            if (received >= min_packets
+                    and stable_since is not None
+                    and (time.time() - stable_since) >= stability_secs):
+                print('\n[Startup] Stream stable — starting inference.', flush=True)
+                return
+    finally:
+        probe.stop()
+
+    print('\n[Startup] Warning: stream did not stabilize — continuing anyway.', flush=True)
 
 
 def main():
@@ -258,6 +322,12 @@ def main():
                 if not buf_ready.is_set() and samples_received >= FILTER_CONTEXT:
                     buf_ready.set()
 
+    launch_xtrodes_app()
+
+    bat_path = os.path.normpath(os.path.join(_project, 'real_time_gui', 'checknetisolation.bat'))
+    threading.Thread(target=lambda: subprocess.run([bat_path], shell=True), daemon=True).start()
+
+    wait_for_stable_stream(HOST_DAU, PORT_DAU)
     threading.Thread(target=_collect, daemon=True).start()
     handler.start()
 
