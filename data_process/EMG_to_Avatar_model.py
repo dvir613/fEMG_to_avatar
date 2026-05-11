@@ -1153,8 +1153,8 @@ def main():
     parser = argparse.ArgumentParser(description="Train and evaluate models for blendshape prediction")
     parser.add_argument("--data_path", default=fr"C:\Users\Hila\OneDrive\מסמכים\fEMG_to_avatar\data", help="Path to data directory")
     parser.add_argument("--test_eeg", action="store_true", default=False, help="Test EEG flag")
-    parser.add_argument("--ica_flag", action="store_true", default=True, help="Use ICA flag")
-    parser.add_argument("--emg_flag", action="store_true", default=False, help="Use EMG flag")
+    parser.add_argument("--ica_flag", action="store_true", default=False, help="Use ICA flag")
+    parser.add_argument("--emg_flag", action="store_true", default=True, help="Use EMG flag")
     parser.add_argument("--plot_ica", action="store_true", default=False, help="Plot ICA flag")
     parser.add_argument("--train_one_trial", action="store_true", default=True)
     parser.add_argument("--trial_num", default='trial_1', choices=['trial_1', 'trial_2', 'trial_3'])
@@ -1181,6 +1181,8 @@ def main():
     parser.add_argument("--models", nargs='+',
                         default=['LR', 'ETR', 'Ridge', 'Lasso', 'ElasticNet', 'DecisionTreeRegressor',
                                  'RandomForestRegressor'], help="Models to evaluate")
+    parser.add_argument("--general_segments", action="store_true", default=True,
+                        help="Train on continuous sliding-window segments instead of expression-annotated windows")
 
     args = parser.parse_args()
 
@@ -1190,25 +1192,25 @@ def main():
 
     performance_results = []
     for participant_folder in os.listdir(args.data_path):
-        if not participant_folder == 'participant_03':
+        if not participant_folder == 'participant_05':
             continue
         if 'csv' in participant_folder:
             continue
         participant_ID = participant_folder
         participant_folder_path = os.path.join(args.data_path, participant_folder)
         for session_folder in os.listdir(participant_folder_path):
-            if not session_folder == 'S1':
+            if not session_folder == 'S2':
                 continue
             session_folder_path = os.path.join(participant_folder_path, session_folder)
             session_number = session_folder
 
             # Run for both ICA and EMG configurations
-            for config in ['ICA']:
+            for config in ['EMG']:
                 print(f"\nRunning {config} configuration for {participant_ID}, session {session_number}")
 
                 # Load and prepare data (existing code)
                 ica_after_order = extract_and_order_ica_data(participant_ID, session_folder_path, session_number)
-                edf_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_edited.edf")
+                edf_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}.edf")
                 emg_file = mne.io.read_raw_edf(edf_path, preload=True)
                 emg_fs = emg_file.info['sfreq']
 
@@ -1218,71 +1220,121 @@ def main():
                     X_full = emg_file.get_data()[:16, :]
                     X_full = filter_signal(X_full, emg_fs)
 
-                # Prepare data for model (existing code)
-                annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
-                                    '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
-                # print all the annotations that contains the strings in annotations_list
-                annotations_list_with_start_end = []
-                for annotation in emg_file.annotations.description:
-                    if args.train_one_trial:
-                        if args.trial_num in annotation:
+                if not args.general_segments:
+                    # Prepare data for model (existing code)
+                    annotations_list = ['05_Forehead', '07_Eye_gentle', '09_Eye_tight', '12_Nose', '14_Smile_closed',
+                                        '16_Smile_open', '19_Lip_pucker', '21_Cheeks', '23_Snarl', '26_Depress_lip']
+                    # print all the annotations that contains the strings in annotations_list
+                    annotations_list_with_start_end = []
+                    for annotation in emg_file.annotations.description:
+                        if args.train_one_trial:
+                            if args.trial_num in annotation:
+                                if 'start' in annotation or 'end' in annotation:
+                                    if not 'Break' in annotation:
+                                        # if not 'Face_at_rest' in annotation:
+                                        #     annotations_list_with_start_end.append(annotation)
+                                        annotations_list_with_start_end.append(annotation)
+
+                        else:
                             if 'start' in annotation or 'end' in annotation:
                                 if not 'Break' in annotation:
-                                    # if not 'Face_at_rest' in annotation:
-                                    #     annotations_list_with_start_end.append(annotation)
-                                    annotations_list_with_start_end.append(annotation)
+                                    if not 'Face_at_rest' in annotation:
+                                        if not 'time' in annotation:
+                                            annotations_list_with_start_end.append(annotation)
+                    events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
+                    # make events_timings into a list with 10 lists that each contains the start and end of the annotation
+                    events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
+                    if not args.ica_flag and not args.emg_flag:
+                        raise ValueError("Must specify either --ica_flag or --emg_flag")
+                    if args.ica_flag:
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
+                            ica_after_order, emg_fs, events_timings, args.rand_test, args.num_repetition, args.plot_ica,
+                            averaging="RMS")
+                    elif args.emg_flag:
+                        relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
+                            X_full, emg_fs, events_timings, args.rand_test, args.num_repetition, args.plot_ica,
+                            averaging="RMS")
+                    # Load avatar data (existing code)
+                    avatar_data = pd.read_csv(os.path.join(session_folder_path,
+                                                           f"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv"),
+                                              header=0, index_col=0)
+                    blendshapes = avatar_data.columns
+                    relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID,
+                                                                                                         avatar_data,
+                                                                                                         emg_file,
+                                                                                                         events_timings,
+                                                                                                         args.rand_test,
+                                                                                                         args.num_repetition,
+                                                                                                         args.plot_ica,
+                                                                                                         rand_lst,
+                                                                                                         fs=60,
+                                                                                                         averaging="RMS")
+                    if args.plot_ica:
+                        plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number,
+                                 test_data_timing, args.train_one_trial, args.trial_num, args.emg_flag)
+
+                    X_train = np.concatenate(relevant_data_train_emg, axis=1)
+                    X_test = np.concatenate(relevant_data_test_emg, axis=1)
+                    Y_train = np.concatenate(relevant_data_train_avatar, axis=1)
+                    Y_test = np.concatenate(relevant_data_test_avatar, axis=1)
+                    # save only the same trials as the emg data
+                    Y_train = Y_train[:, :X_train.shape[1]]
+                    Y_test = Y_test[:, :X_test.shape[1]]
+
+                    X_train = X_train.T
+                    X_test = X_test.T
+                    Y_train = Y_train.T
+                    Y_test = Y_test.T
+
+                else:
+                    # General segments: apply sliding window to the full continuous signal
+                    annotations_list = []
+                    rand_lst = None
+                    test_data_timing = None
+                    avatar_data = pd.read_csv(os.path.join(session_folder_path,
+                                                           f"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv"),
+                                              header=0, index_col=0)
+                    blendshapes = avatar_data.columns
+                    # Compute face-at-rest normalization reference: mean RMS in 100ms windows
+                    # during the segment between the 2nd and 3rd Face_at_rest annotation
+                    face_at_rest_onsets = sorted(
+                        ann['onset'] for ann in emg_file.annotations if 'Face_at_rest' in ann['description']
+                    )
+                    if len(face_at_rest_onsets) >= 3:
+                        rest_start = int(face_at_rest_onsets[1] * emg_fs)
+                        rest_end = int(face_at_rest_onsets[2] * emg_fs)
+                        rest_segment = X_full[:, rest_start:rest_end]
+                        win_size = int(0.1 * emg_fs)
+                        n_win = rest_segment.shape[1] // win_size
+                        rms_windows = np.array([
+                            np.sqrt(np.mean(rest_segment[:, j * win_size:(j + 1) * win_size] ** 2, axis=1))
+                            for j in range(n_win)
+                        ])  # (n_win, n_channels)
+                        face_at_rest_rms = rms_windows.mean(axis=0)  # (n_channels,)
                     else:
-                        if 'start' in annotation or 'end' in annotation:
-                            if not 'Break' in annotation:
-                                if not 'Face_at_rest' in annotation:
-                                    if not 'time' in annotation:
-                                        annotations_list_with_start_end.append(annotation)
-                events_timings = get_annotations_timings(emg_file, annotations_list_with_start_end)
-                # make events_timings into a list with 10 lists that each contains the start and end of the annotation
-                events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
-
-                if not args.ica_flag and not args.emg_flag:
-                    raise ValueError("Must specify either --ica_flag or --emg_flag")
-                if args.ica_flag:
-                    relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        ica_after_order, emg_fs, events_timings, args.rand_test, args.num_repetition, args.plot_ica,
-                        averaging="RMS")
-                elif args.emg_flag:
-                    relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
-                        X_full, emg_fs, events_timings, args.rand_test, args.num_repetition, args.plot_ica,
-                        averaging="RMS")
-                # Load avatar data (existing code)
-                avatar_data = pd.read_csv(os.path.join(session_folder_path,
-                                                       f"{participant_ID}_{session_number}_interpolated_relevant_only_right.csv"),
-                                          header=0, index_col=0)
-                blendshapes = avatar_data.columns
-                relevant_data_train_avatar, relevant_data_test_avatar = prepare_avatar_relevant_data(participant_ID,
-                                                                                                     avatar_data,
-                                                                                                     emg_file,
-                                                                                                     events_timings,
-                                                                                                     args.rand_test,
-                                                                                                     args.num_repetition,
-                                                                                                     args.plot_ica,
-                                                                                                     rand_lst,
-                                                                                                     fs=60,
-                                                                                                     averaging="RMS")
-                if args.plot_ica:
-                    plot_ica(annotations_list, emg_fs, participant_ID, relevant_data_test_emg, session_number,
-                             test_data_timing, args.train_one_trial, args.trial_num, args.emg_flag)
-
-                X_train = np.concatenate(relevant_data_train_emg, axis=1)
-                X_test = np.concatenate(relevant_data_test_emg, axis=1)
-                Y_train = np.concatenate(relevant_data_train_avatar, axis=1)
-                Y_test = np.concatenate(relevant_data_test_avatar, axis=1)
-                # save only the same trials as the emg data
-                Y_train = Y_train[:, :X_train.shape[1]]
-                Y_test = Y_test[:, :X_test.shape[1]]
-
-                X_train = X_train.T
-                X_test = X_test.T
-                Y_train = Y_train.T
-                Y_test = Y_test.T
+                        print("Warning: fewer than 3 Face_at_rest annotations found; skipping RMS normalization.")
+                        face_at_rest_rms = None
+                    emg_windowed = sliding_window(X_full, method="RMS", fs=emg_fs)
+                    if face_at_rest_rms is not None:
+                        emg_windowed = emg_windowed / face_at_rest_rms[:, np.newaxis]
+                        emg_windowed[np.isnan(emg_windowed)] = 0
+                        emg_windowed[np.isinf(emg_windowed)] = 0
+                    time_delta = get_time_delta(emg_file, avatar_data, participant_ID)
+                    avatar_array = avatar_data.values.T
+                    avatar_fs = 60
+                    cut_frames = int(time_delta * avatar_fs)
+                    if cut_frames > 0:
+                        avatar_array = avatar_array[:, cut_frames:]
+                    avatar_windowed = sliding_window(avatar_array, method="MEAN", fs=avatar_fs)
+                    min_len = min(emg_windowed.shape[1], avatar_windowed.shape[1])
+                    emg_windowed = emg_windowed[:, :min_len]
+                    avatar_windowed = avatar_windowed[:, :min_len]
+                    split_idx = int(min_len * 0.8)
+                    X_train = emg_windowed[:, :split_idx].T
+                    X_test = emg_windowed[:, split_idx:].T
+                    Y_train = avatar_windowed[:, :split_idx].T
+                    Y_test = avatar_windowed[:, split_idx:].T
 
                 if args.scale_data:
                     # # Standardize the features
@@ -1456,40 +1508,40 @@ def main():
                     # Reset performance_results for the next session
                     performance_results = []
 
-                original_lengths_ground_truth = [arr.shape[1] for arr in relevant_data_test_avatar]
+                if not args.general_segments:
+                    original_lengths_ground_truth = [arr.shape[1] for arr in relevant_data_test_avatar]
 
-                Y_test = scaler_Y.inverse_transform(Y_test.cpu().numpy())
+                    Y_test = scaler_Y.inverse_transform(Y_test.cpu().numpy())
 
-                ground_truth = split_concatenated_array(Y_test.T, original_lengths_ground_truth)
+                    ground_truth = split_concatenated_array(Y_test.T, original_lengths_ground_truth)
 
-                predictions = split_concatenated_array(Y_pred.T, original_lengths_ground_truth)
+                    predictions = split_concatenated_array(Y_pred.T, original_lengths_ground_truth)
 
-                if args.train_one_trial:
-                    plot_prediction_vs_GT(annotations_list, 6, participant_ID, ground_truth, predictions, session_number,
-                                          test_data_timing, args.rand_test, args.num_repetition)
+                    if args.train_one_trial:
+                        plot_prediction_vs_GT(annotations_list, 6, participant_ID, ground_truth, predictions, session_number,
+                                              test_data_timing, args.rand_test, args.num_repetition)
 
-                    plot_correlations_barplot(participant_ID, session_number, Y_pred, Y_test, project_folder, args.rand_test, args.num_repetition)
-                #   create a csv with blendshapes names and their index
-                blendshapes_dict = {blendshapes[i]: i for i in range(len(blendshapes))}
-                blendshapes_dict_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_dict.csv")
-                # save the dictionary as a csv file
-                pd.DataFrame.from_dict(blendshapes_dict, orient='index').to_csv(blendshapes_dict_path)
-                # convert the test values to the original scale
-                # Save avatar data (existing code)
-                avatar_sliding_window_method = "RMS"
-                path = os.path.join(session_folder_path,
+                        plot_correlations_barplot(participant_ID, session_number, Y_pred, Y_test, project_folder, args.rand_test, args.num_repetition)
+                    #   create a csv with blendshapes names and their index
+                    blendshapes_dict = {blendshapes[i]: i for i in range(len(blendshapes))}
+                    blendshapes_dict_path = os.path.join(session_folder_path, f"{participant_ID}_{session_number}_blendshapes_dict.csv")
+                    # save the dictionary as a csv file
+                    pd.DataFrame.from_dict(blendshapes_dict, orient='index').to_csv(blendshapes_dict_path)
+                    # convert the test values to the original scale
+                    # Save avatar data (existing code)
+                    avatar_sliding_window_method = "RMS"
+                    path = os.path.join(session_folder_path,
+                                     f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv")
+                    if args.train_one_trial:
+                        path = path.replace(f'.csv', f"_{args.trial_num}.csv")
+                        if not args.rand_test:
+                            path = path.replace(f'_{args.trial_num}', f'_{args.trial_num}_repetition_{args.num_repetition+1}')
+                    else:
+                        if not args.rand_test:
+                            path = path.replace(f'.csv', f"_repetition_{args.num_repetition+1}.csv")
+                    pd.DataFrame(Y_test, columns=blendshapes).to_csv(path)
 
-                                 f"{participant_ID}_{session_number}_avatar_blendshapes_{avatar_sliding_window_method}.csv")
-                if args.train_one_trial:
-                    path = path.replace(f'.csv', f"_{args.trial_num}.csv")
-                    if not args.rand_test:
-                        path = path.replace(f'_{args.trial_num}', f'_{args.trial_num}_repetition_{args.num_repetition+1}')
-                else:
-                    if not args.rand_test:
-                        path = path.replace(f'.csv', f"_repetition_{args.num_repetition+1}.csv")
-                pd.DataFrame(Y_test, columns=blendshapes).to_csv(path)
-
-                print("Avatar data saved as CSV file.\n")
+                    print("Avatar data saved as CSV file.\n")
 
 
 

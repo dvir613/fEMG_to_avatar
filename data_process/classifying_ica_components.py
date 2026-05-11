@@ -325,14 +325,16 @@ if __name__ == '__main__':
     data_path = fr"{project_folder}\data"
     for participant_folder in os.listdir(data_path):
         participant_ID = participant_folder
-        if participant_ID != 'participant_03':
+        if participant_ID != 'participant_05':
             continue
         participant_folder_path = fr'{data_path}\{participant_folder}'
         for session_folder in os.listdir(participant_folder_path):
             session_folder_path = fr'{participant_folder_path}\{session_folder}'
+            if 'S2' not in session_folder:
+                continue
             edf_files_lst = []
             for file in os.listdir(session_folder_path):
-                if file.endswith('edited.edf'):
+                if file.endswith('.edf'):
                     edf_files_lst.append(fr'{session_folder_path}\{file}')
                     # edf_files_lst.append(fr'{participant_folder_path}\{file}')
                 else:

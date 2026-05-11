@@ -265,7 +265,14 @@ def get_params_from_gui():
         toggle_record_fields(mode in ("record", "test-record"))
         toggle_reps_field(mode != "test-record")
 
-    submit_row = 3 + len(record_labels) + 1
+    # No-demo checkbox
+    no_demo_var = tk.BooleanVar(value=False)
+    no_demo_row = 3 + len(record_labels)
+    tk.Checkbutton(root, text="No Demo (skip intro/break/credits videos)",
+                   variable=no_demo_var).grid(
+        row=no_demo_row, column=0, columnspan=2, pady=(5, 0))
+
+    submit_row = no_demo_row + 1
 
     def on_submit():
         params['mode'] = mode_var.get()
@@ -301,6 +308,7 @@ def get_params_from_gui():
             params['session_number'] = values[1]
             params['data_path'] = values[2]
 
+        params['no_demo'] = no_demo_var.get()
         root.destroy()
 
     tk.Button(root, text="Start Experiment", command=on_submit,
@@ -323,11 +331,14 @@ def get_params_from_gui():
     return params
 
 
-def play_videos(directory, n_reps, data=None):
+def play_videos(directory, n_reps, data=None, no_demo=False):
     # Get all mp4 files sorted by name (numeric prefix order)
     video_files = sorted(f for f in os.listdir(directory) if f.endswith('.mp4'))
 
     for video_file in video_files:
+        if no_demo and not is_expression_video(video_file):
+            continue
+
         video_path = os.path.join(directory, video_file)
         annotation = video_file.split('.')[0]
 
@@ -378,6 +389,7 @@ if __name__ == '__main__':
     params = get_params_from_gui()
 
     n_reps = params.get('n_reps', 1)
+    no_demo = params.get('no_demo', False)
     directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'experiment videos')
     gui_script = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
@@ -409,8 +421,8 @@ if __name__ == '__main__':
         data.start()
         data.add_annotation("Start recording")
 
-        play_videos(directory, n_reps, data=data)
-        free_behavior(data=data)
+        play_videos(directory, n_reps, data=data, no_demo=no_demo)
+        # free_behavior(data=data)
 
         data.add_annotation("data_start_time: " + str(data.start_time))
         data.add_annotation("stop_recording")
@@ -473,7 +485,7 @@ if __name__ == '__main__':
         gui_proc = subprocess.Popen([sys.executable, gui_script])
         print("[Annotation] Start recording")
 
-        play_videos(directory, n_reps)
+        play_videos(directory, n_reps, no_demo=no_demo)
         # free_behavior()
 
         print("[Annotation] stop_recording")

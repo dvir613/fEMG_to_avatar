@@ -65,8 +65,8 @@ from CONSTS import mapping, blend_shapes, relevant_blendshapes
 XTRODES_APP_ID = "Xtrodes.PC.BluetoothLE.DAU_0xzewdaf21npg!BluetoothLE.App"
 
 # ── session config — edit these before each session ───────────────────────────
-PARTICIPANT_ID = 'participant_04'
-SESSION_NUMBER = 'S1'
+PARTICIPANT_ID = 'participant_05'
+SESSION_NUMBER = 'S2'
 MODEL_NAME     = 'ImprovedEnhancedTransformNet_trial_1'
 WAVELET        = 'db15'
 HOST_DAU       = '127.0.0.1'
@@ -79,7 +79,11 @@ BUFFER_SECS    = 2      # total ring buffer duration
 FILTER_SECS    = 1      # context fed to filtfilt to avoid edge artifacts
 RMS_SECS       = 0.1    # RMS window — must match window_length used in training
 NUM_CHANNELS   = 16
-ICA_MAX_ITER   = 50     # PICARD iterations (reduced from 300 for real-time speed)
+ICA_MAX_ITER   = 300     # PICARD iterations (reduced from 300 for real-time speed)
+
+# Set to True to send a slow sine wave on all blend shapes instead of EMG inference.
+# Use this to verify Unity is receiving and applying values before the real pipeline works.
+DEBUG_SINE     = False
 
 BUFFER_SIZE    = int(FS * BUFFER_SECS)
 FILTER_CONTEXT = int(FS * FILTER_SECS)
@@ -93,8 +97,8 @@ RECORD_TYPES_A0 = {0xa0, 0xa0 | 0x8}
 def load_artifacts(data_path, results_path, data_proc_path, project_dir):
     session_path = os.path.join(data_path, PARTICIPANT_ID, SESSION_NUMBER)
 
-    model = joblib.load(os.path.join(session_path,
-        f'{PARTICIPANT_ID}_{SESSION_NUMBER}_blendshapes_{MODEL_NAME}_ICA.joblib'))
+    model_filename = f'{PARTICIPANT_ID}_{SESSION_NUMBER}_blendshapes_{MODEL_NAME}_EMG.joblib'
+    model = joblib.load(os.path.join(session_path, model_filename))
     model = model.cpu()
     model.eval()
 
@@ -102,6 +106,10 @@ def load_artifacts(data_path, results_path, data_proc_path, project_dir):
         f'scaler_X_{PARTICIPANT_ID}_{SESSION_NUMBER}.joblib'))
     scaler_Y = joblib.load(os.path.join(results_path,
         f'scaler_Y_{PARTICIPANT_ID}_{SESSION_NUMBER}.joblib'))
+
+    if 'EMG' in model_filename and 'ICA' not in model_filename:
+        print('[Artifacts] model and scalers loaded (EMG pipeline, no atlas needed).')
+        return model, scaler_X, scaler_Y, None
 
     atlas_dir = os.path.join(data_proc_path, 'atlas')
     threshold = np.load(os.path.join(atlas_dir, 'threshold.npy'))
@@ -121,7 +129,7 @@ def load_artifacts(data_path, results_path, data_proc_path, project_dir):
                  grid_x=grid_x, grid_y=grid_y, points=points,
                  height=height, width=width)
 
-    print(f'[Artifacts] model, scalers, and atlas loaded.')
+    print('[Artifacts] model, scalers, and atlas loaded.')
     return model, scaler_X, scaler_Y, atlas
 
 
@@ -183,39 +191,60 @@ def _classify_rt(W, atlas):
 
 
 def infer(ring_buf, atlas, model, scaler_X, scaler_Y):
-    """Run one inference step replicating the calibration preprocessing pipeline.
+    """Run one inference step.
 
-    filter → wavelet denoise → center → whiten → PICARD ICA →
-    atlas classify → reorder → normalize → RMS → scale → model
+    EMG pipeline (MODEL_NAME contains 'EMG' but not 'ICA'):
+      filter → RMS → scale → model
 
-    Falls back to RMS of filtered raw signal when PICARD does not converge.
+    ICA pipeline (all other model names):
+      filter → wavelet denoise → center → whiten → PICARD ICA →
+      atlas classify → reorder → normalize → RMS → scale → model
+      Falls back to filtered EMG RMS when PICARD does not converge.
     """
+    _t0 = time.perf_counter()
     context = ring_buf[:, -FILTER_CONTEXT:].copy()      # (16, FILTER_CONTEXT)
-
     filtered = filter_signal(context, FS)                # notch + bandpass
-    denoised = _denoise_chunk(filtered, WAVELET)         # wavelet thresholding
-    centered, _ = center(denoised)                       # zero-mean per channel
-    whitened, _ = whiten(centered)                       # sphering
+    _t_filter = time.perf_counter()
 
-    with warnings.catch_warnings(record=True) as _caught:
-        warnings.simplefilter('always')
-        _, W, Y = picard(whitened, n_components=NUM_CHANNELS,
-                         ortho=True, extended=True, whiten=False,
-                         max_iter=ICA_MAX_ITER)
-
-    converged = not any('did not converge' in str(w.message) for w in _caught)
-
-    if converged:
-        electrode_order = _classify_rt(W, atlas)         # atlas muscle mapping
-        ica_ordered = np.zeros_like(Y)
-        for i, elec in enumerate(electrode_order):
-            if elec != 16:
-                ica_ordered[elec, :] = Y[i, :]
-        ica_ordered = normalize_ica_data(ica_ordered)
-        rms = np.sqrt(np.mean(ica_ordered[:, -RMS_WINDOW:] ** 2, axis=1))  # (16,)
-    else:
-        print('[Infer] PICARD did not converge — using raw filtered RMS.', flush=True)
+    model_filename = f'{PARTICIPANT_ID}_{SESSION_NUMBER}_blendshapes_{MODEL_NAME}_EMG.joblib'
+    if 'EMG' in model_filename and 'ICA' not in model_filename:
+        print(f'[Infer] pipeline=EMG  MODEL_NAME={MODEL_NAME!r}', flush=True)
         rms = np.sqrt(np.mean(filtered[:, -RMS_WINDOW:] ** 2, axis=1))      # (16,)
+        _t_rms = time.perf_counter()
+        print(f'[Timing] filter={(_t_filter-_t0)*1000:.1f}ms  rms={(_t_rms-_t_filter)*1000:.1f}ms', flush=True)
+    else:
+        print(f'[Infer] pipeline=ICA  MODEL_NAME={MODEL_NAME!r}', flush=True)
+        denoised = _denoise_chunk(filtered, WAVELET)         # wavelet thresholding
+        _t_denoise = time.perf_counter()
+        centered, _ = center(denoised)                       # zero-mean per channel
+        whitened, _ = whiten(centered)                       # sphering
+        _t_whiten = time.perf_counter()
+
+        with warnings.catch_warnings(record=True) as _caught:
+            warnings.simplefilter('always')
+            _, W, Y = picard(whitened, n_components=NUM_CHANNELS,
+                             ortho=True, extended=True, whiten=False,
+                             max_iter=ICA_MAX_ITER)
+        _t_picard = time.perf_counter()
+
+        converged = not any('did not converge' in str(w.message) for w in _caught)
+        print(f'[Timing] filter={(_t_filter-_t0)*1000:.1f}ms  '
+              f'denoise={(_t_denoise-_t_filter)*1000:.1f}ms  '
+              f'whiten={(_t_whiten-_t_denoise)*1000:.1f}ms  '
+              f'picard={(_t_picard-_t_whiten)*1000:.1f}ms  '
+              f'converged={converged}', flush=True)
+
+        if converged:
+            electrode_order = _classify_rt(W, atlas)         # atlas muscle mapping
+            ica_ordered = np.zeros_like(Y)
+            for i, elec in enumerate(electrode_order):
+                if elec != 16:
+                    ica_ordered[elec, :] = Y[i, :]
+            ica_ordered = normalize_ica_data(ica_ordered)
+            rms = np.sqrt(np.mean(ica_ordered[:, -RMS_WINDOW:] ** 2, axis=1))  # (16,)
+        else:
+            print('[Infer] PICARD did not converge — using filtered EMG RMS.', flush=True)
+            rms = np.sqrt(np.mean(filtered[:, -RMS_WINDOW:] ** 2, axis=1))      # (16,)
 
     x = scaler_X.transform(rms.reshape(1, -1))          # (1, 16)
     with torch.no_grad():
@@ -223,8 +252,8 @@ def infer(ring_buf, atlas, model, scaler_X, scaler_Y):
     pred = scaler_Y.inverse_transform(pred)              # (1, 31)
 
     df = pd.DataFrame(pred, columns=relevant_blendshapes)
-    full = fill_symetrical(df, mapping, blend_shapes)    # (1, 50) numpy array
-    return full[0].astype(np.float32)                    # (50,) float32
+    full = fill_symetrical(df, mapping, blend_shapes)    # (1, 57) float64 array
+    return full[0]                                       # (57,) float64 — matches Unity double[57]
 
 
 def launch_xtrodes_app():
@@ -342,18 +371,34 @@ def main():
 
     print(f'[Startup] Waiting for {FILTER_SECS}s of EMG data...')
     buf_ready.wait()
-    print('[Inference] Starting 20 Hz loop — press Ctrl+C to stop.')
+    if DEBUG_SINE:
+        print('[Inference] DEBUG_SINE=True — sending sine wave, not EMG. Ctrl+C to stop.')
+    else:
+        print('[Inference] Starting 20 Hz loop — press Ctrl+C to stop.')
 
     interval = 1.0 / SEND_HZ
+    frame = 0
     try:
         while True:
             t0 = time.perf_counter()
 
-            with buf_lock:
-                snap = ring_buf.copy()
+            if DEBUG_SINE:
+                # 0.2 Hz sine sweeping 0..1 on all 57 blend shapes — avatar should pulse visibly
+                val = float(0.5 + 0.5 * np.sin(2 * np.pi * 0.2 * frame / SEND_HZ))
+                blend = np.full(len(blend_shapes), val, dtype=np.float64)
+            else:
+                with buf_lock:
+                    snap = ring_buf.copy()
+                blend = infer(snap, atlas, model, scaler_X, scaler_Y)
 
-            blend = infer(snap, atlas, model, scaler_X, scaler_Y)
             conn.sendall(blend.tobytes())
+            frame += 1
+
+            # Print diagnostics once per second
+            if frame % SEND_HZ == 0:
+                print(f'[Diag] frame={frame}  blend min={blend.min():.4f}  '
+                      f'max={blend.max():.4f}  mean={blend.mean():.4f}  '
+                      f'bytes_sent={len(blend.tobytes())}', flush=True)
 
             elapsed = time.perf_counter() - t0
             wait = interval - elapsed

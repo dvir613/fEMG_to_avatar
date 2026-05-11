@@ -26,7 +26,7 @@ def sliding_window(data, method, fs, window_length=0.1, face_at_rest=None):
         for i in range(data.shape[0]):
             for j in range(num_windows):
                 # normalizing by the RMS of the face at rest as a reference
-                if fs == 500:
+                if fs == 500 and face_at_rest is not None:
                     result[i, j] = np.sqrt(np.mean(np.power(data[i, j * window_size:j * window_size + window_size], 2))) / np.sqrt(
                         np.mean(np.power(face_at_rest[i, :], 2)))
                 else:
@@ -172,8 +172,12 @@ def get_time_delta(emg_file, avatar_file, participant_ID):
     else:
         # the last annotation (before "stop recording") is: "data.start_time: YYYY-MM-DD HH:MM:SS.fff"
         edf_annotations = emg_file.annotations
-        edf_start_time = edf_annotations[-2]['description'].split(' ')[-1]
-        edf_start_time = datetime.strptime(edf_start_time, "%H:%M:%S.%f")
+        edf_start_time_str = edf_annotations[-2]['description'].split(' ')[-1]
+        try:
+            edf_start_time = datetime.strptime(edf_start_time_str, "%H:%M:%S.%f")
+        except ValueError:
+            # Unix timestamp written by EDFRecorder (time.time())
+            edf_start_time = datetime.fromtimestamp(float(edf_start_time_str))
         edf_start_time = edf_start_time.time()
 
     # get avatar start time
