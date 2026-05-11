@@ -33,8 +33,8 @@ def load_timing_annotations(edf_path):
 
     for onset, label in zip(onsets, labels):
         label = label.strip()
-        if label.startswith("data_start_time:"):
-            start_time = float(label.split(":", 1)[1].strip())
+        if label.startswith("Start test recording"):
+            start_time = float(label.split("", 1)[1].strip())
         elif label.startswith("timing_check pc_time="):
             pc_time = float(label.split("=", 1)[1].strip())
             timing_checks.append((float(onset), pc_time))
