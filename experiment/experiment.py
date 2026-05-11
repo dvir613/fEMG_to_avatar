@@ -172,7 +172,8 @@ class EDFRecorder:
                 return
             onset = (self._total_samples_written + self._buffer_samples) / self._sampling_rate
             self._edf_writer.writeAnnotation(onset, -1, label)
-            print(f"[Annotation @ {onset:.2f}s] {label}")
+            if not label.startswith("timing_check"):
+                print(f"[Annotation @ {onset:.2f}s] {label}")
 
     @property
     def start_time(self):
@@ -430,6 +431,17 @@ if __name__ == '__main__':
         data.start()
         data.add_annotation("Start test recording")
 
+        # Send a timestamped annotation every 1 s so latency can be measured offline.
+        # Annotation format: "timing_check pc_time=<unix_timestamp_seconds>"
+        _stop_timing = threading.Event()
+
+        def _send_timing_annotations():
+            while not _stop_timing.wait(1.0):
+                data.add_annotation(f"timing_check pc_time={time.time():.6f}")
+
+        timing_thread = threading.Thread(target=_send_timing_annotations, daemon=True)
+        timing_thread.start()
+
         # Show a small window — recording runs until the user clicks Stop
         stop_root = tk.Tk()
         stop_root.title("Test Recording")
@@ -449,6 +461,9 @@ if __name__ == '__main__':
         y = (stop_root.winfo_screenheight() // 2) - (h // 2)
         stop_root.geometry(f"+{x}+{y}")
         stop_root.mainloop()
+
+        _stop_timing.set()
+        timing_thread.join(timeout=2)
 
         data.add_annotation("data_start_time: " + str(data.start_time))
         data.add_annotation("stop_test_recording")

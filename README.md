@@ -16,3 +16,74 @@ Facial Action Coding System (FACS) is a comprehensive, anatomically-based system
 * Real-time visualization on 3D avatars in Unity
 * Python-to-C# data communication
 
+# Running an Experiment (`experiment/experiment.py`)
+
+## Hardware Setup
+
+1. **Power on the DAU** (the X-trodes BLE device) before running the script.
+2. If the X-trodes app crashes on the first launch, **power the DAU off and back on**, then re-run the script.
+
+## What the script does automatically
+
+When you run `experiment.py`, it:
+
+1. **Launches the X-trodes PC App** (`Xtrodes.PC.BluetoothLE.DAU`) automatically via PowerShell.
+2. **Runs `checknetisolation.bat`** in the background to apply the Windows loopback network exemption required for BLE communication. **Keep the terminal window that opens for this step open** — closing it prematurely may interrupt the connection.
+3. **Waits for you to configure and start streaming** in the X-trodes app (see steps below).
+4. Plays experiment videos from the `experiment/experiment videos/` folder and (in record modes) saves fEMG data to an EDF file.
+
+## Steps in the X-trodes App
+
+Once the X-trodes app has opened:
+
+1. Select the desired **sampling frequency (fs)** and any other recording settings.
+2. Connect to the DAU.
+3. Click **"Start Streaming"**.
+
+The script will detect the data stream automatically and proceed once it is stable.
+
+## Experiment Modes
+
+Run the script and a GUI window will appear to select parameters:
+
+```bash
+cd experiment
+python experiment.py
+```
+
+### Mode: Record (EDF)
+
+Records fEMG data to an EDF+ file while playing the experiment videos.
+
+| Parameter | Description |
+|---|---|
+| Repetitions per expression | How many times each expression video is played |
+| Participant ID | e.g. `participant_05` |
+| Session number | Positive integer, e.g. `1` |
+| Data path | Root folder where session data will be saved |
+
+Data is saved to: `<data_path>/<participant_id>/S<session_number>/<participant_id>_S<session_number>.edf`
+
+The script plays all `.mp4` videos in `experiment/experiment videos/` (sorted by filename). Videos whose names contain `demonstration`, `info`, `introduction`, `break`, or `credits` are played once regardless of the repetitions setting. After the videos, a 2-minute **free behavior** window is shown.
+
+EDF annotations mark the start of each video trial, the free behavior period, and the recording start/stop times.
+
+### Mode: Test Record
+
+Records fEMG to a separate `_test.edf` file. The recording runs until you click **"Stop Recording"** in a small window — useful for checking electrode placement and signal quality before a full session. The repetitions field is disabled in this mode.
+
+Data is saved to: `<data_path>/<participant_id>/S<session_number>/<participant_id>_S<session_number>_test.edf`
+
+### Mode: Visualize Only
+
+Plays the experiment videos without recording any EDF data. Instead, launches `real_time_gui/newMain.py` to stream live avatar visualization. Use this when you only want to visualize the avatar in real time without saving EMG data.
+
+## Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| X-trodes app crashes on launch | Power the DAU off, then on again, and re-run the script |
+| Script hangs at "Waiting for X-trodes app to be ready" | Make sure the DAU is powered on and Bluetooth is enabled; click Start Streaming in the app |
+| Script hangs at "checking data stream" | Verify the sampling frequency and channel settings in the X-trodes app, then restart streaming |
+| No EDF file created | No data packets were received — check BLE connection and electrode contact |
+
