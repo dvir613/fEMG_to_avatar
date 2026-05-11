@@ -1242,6 +1242,8 @@ def main():
                 # make events_timings into a list with 10 lists that each contains the start and end of the annotation
                 events_timings = [[events_timings[i], events_timings[i + 1]] for i in range(0, len(events_timings), 2)]
 
+                if not args.ica_flag and not args.emg_flag:
+                    raise ValueError("Must specify either --ica_flag or --emg_flag")
                 if args.ica_flag:
                     relevant_data_train_emg, relevant_data_test_emg, rand_lst, test_data_timing = prepare_relevant_data_new(
                         ica_after_order, emg_fs, events_timings, args.rand_test, args.num_repetition, args.plot_ica,

@@ -26,12 +26,12 @@ Predict Facial Action Units (blendshapes) from facial surface EMG (fEMG) recorde
 | 7 | `control_avatar/send_data_to_CS.py` | Reads predicted blendshape CSV → symmetrizes to 50 blendshapes → sends via TCP (port 65432/65433) to Unity at 20 FPS |
 | — | Unity **ICTFace_Avatars** project | Receives blend shapes and applies them to the avatar mesh |
 
-### Real-Time Inference (goal — partially implemented)
+### Real-Time Inference (implemented)
 
 | Step | Script | Status |
 |------|--------|--------|
 | 1 | DAU hardware + Xtrodes app | Must be running and streaming on port 20001 |
-| 2 | `control_avatar/send_live_to_CS.py` *(to be written)* | Receives live EMG, processes it, runs model, sends to Unity |
+| 2 | `control_avatar/send_live_to_CS.py` | Receives live EMG, processes it, runs model, sends to Unity — **done** |
 | 3 | Unity **ICTFace_Avatars** | Receives and displays blend shapes in real time |
 
 ---
@@ -51,29 +51,29 @@ Predict Facial Action Units (blendshapes) from facial surface EMG (fEMG) recorde
 ### For real-time visualization:
 7. **Xtrodes BLE app** — start streaming
 8. **Unity ICTFace_Avatars** — open and play (waits for TCP connection on port 65432)
-9. **`control_avatar/send_live_to_CS.py`** *(to be written)* — connects to DAU, loads W_eff + model + scalers, starts inference loop
+9. **`control_avatar/send_live_to_CS.py`** — connects to DAU, loads W_eff + model + scalers, starts inference loop
 
 ---
 
 ## Architecture of the Real-Time Inference Script
 
-The `send_live_to_CS.py` script must:
+`control_avatar/send_live_to_CS.py` is implemented. It:
 
-1. **Load pre-trained artifacts** from the calibration session:
+1. **Loads pre-trained artifacts** from the calibration session:
    - `W_eff.npy` — composed unmixing matrix (= `W @ whiteM_calib`)
    - `electrode_order.npy` — component-to-muscle mapping
    - `model.joblib` — PyTorch `ImprovedEnhancedTransformNet`
    - `scaler_X.joblib`, `scaler_Y.joblib`
 
-2. **Receive EMG** using `DataHandler` (same as `experiment.py`), accumulate into a ring buffer (~2 seconds, 16 channels)
+2. **Receives EMG** using `DataHandler`, accumulates into a ring buffer (2 seconds, 16 channels) on a background thread
 
-3. **Every 50ms (20 FPS)**, run inference:
+3. **Every 50ms (20 FPS)**, runs inference:
    ```
-   filter_signal(last 1s of buffer)     ← notch + bandpass
+   filter_signal(last 1s of buffer)     ← notch + bandpass, same as calibration
    W_eff @ filtered_chunk               ← apply fixed unmixing operator
    reorder by electrode_order
    normalize_ica_data()
-   RMS over last 100ms window           ← matches training window size
+   RMS over last 100ms window           ← matches window_length=0.1 used in training
    scaler_X.transform()
    model forward pass (torch.no_grad)
    scaler_Y.inverse_transform()
@@ -102,10 +102,16 @@ This `W_eff` is the actual inverse of the physical mixing matrix A (determined b
 **Answer:** No — this is wrong. If you compute a new whitening matrix per chunk, you project the chunk into a different coordinate system than W was calibrated for. Applying W to a differently-whitened chunk gives components that no longer correspond to the same muscles. You would need to re-run PICARD (minutes of computation) to get a valid W for each new whitening. The whole point of calibration is that `W_eff` is a fixed linear operator (the physical inverse mixing matrix). Apply it directly.
 
 ### Q5: What about wavelet denoising in real-time?
-**Answer:** Unavoidable mismatch. During calibration, wavelet denoising was applied before computing `whiteM_calib` and `W`. In real-time, you cannot do wavelet denoising (it is a batch operation and too slow). Practical compromise:
-- The bandpass filter (35–249 Hz) removes most of what wavelet denoising targets
-- `normalize_ica_data()` provides robustness to residual amplitude differences
-- Real-time ICA quality will be slightly lower than calibration quality, which is acceptable
+**Answer:** Wavelet denoising cannot be done in real-time without introducing unacceptable latency. The reason is not speed — it is boundary artifacts. The calibration code processes 10-second windows (e.g., 8000 samples at 800Hz). The db15 wavelet at level 5 has a boundary influence of ~960 samples inward from each edge; with 8000 samples only ~12% of the window is contaminated. In real-time you have at most 1 second of context (500 samples at 500Hz), so ~38% of the window is corrupted. Running denoising on a short window makes the signal worse, not better. To use denoising without artifacts you would need to hold back ~5 seconds of data until it is in the "safe" center of a longer window, making the system unacceptably laggy.
+
+**The correct fix** is to match the calibration preprocessing to what real-time can actually reproduce:
+- Remove wavelet denoising from `classifying_ica_components.py:perform_ica_algorithm` (the bandpass filter 35–249Hz already handles the main artifacts it was targeting)
+- Also remove the downsample-to-800Hz step (`down_sample_flag=False`) so W_eff is computed on 500Hz data matching the real-time device rate
+- Retrain the ML model after re-running ICA calibration with these changes
+
+This eliminates the two main calibration/inference mismatches: sampling rate and denoising. `send_live_to_CS.py` needs no changes — its pipeline already matches what calibration will produce after this fix.
+
+**Why 250Hz is not a good alternative:** The bandpass filter passes 35–249Hz. At 250Hz the Nyquist is 125Hz, cutting off the top half of the EMG frequency band. It would require changing the filter design and would lose meaningful signal.
 
 ### Q6: What window size should real-time RMS use?
 **Answer:** 100ms (50 samples at 500 Hz), matching the `window_length=0.1` used in `sliding_window()` during training. Using a different window size would give the model a different feature distribution than it was trained on.
@@ -117,8 +123,8 @@ This `W_eff` is the actual inverse of the physical mixing matrix A (determined b
 | File | Location | Purpose |
 |------|----------|---------|
 | `W.npy` | `data/participantXX/SX/` | Raw PICARD unmixing matrix |
-| `whiteM_calib.npy` | `data/participantXX/SX/` *(needs to be saved)* | Calibration whitening matrix |
-| `W_eff.npy` | `data/participantXX/SX/` *(needs to be saved)* | Composed operator = W @ whiteM |
+| `whiteM_calib.npy` | `data/participantXX/SX/` | Calibration whitening matrix |
+| `W_eff.npy` | `data/participantXX/SX/` | Composed operator = W @ whiteM — used by real-time inference |
 | `electrode_order.npy` | `data/participantXX/SX/` | Maps ICA components to muscles |
 | `*_blendshapes_ImprovedEnhancedTransformNet*.joblib` | `data/participantXX/SX/` | Trained PyTorch model |
 | `scaler_X_*.joblib` | `results/` | Input feature scaler |
@@ -128,6 +134,6 @@ This `W_eff` is the actual inverse of the physical mixing matrix A (determined b
 
 ## What Still Needs to Be Done
 
-1. **Modify `classifying_ica_components.py`** — save `whiteM_calib` and compute/save `W_eff = W @ whiteM_calib` at the end of calibration
-2. **Write `control_avatar/send_live_to_CS.py`** — real-time inference script using ring buffer + `W_eff` + PyTorch model
+1. **Modify `classifying_ica_components.py:perform_ica_algorithm`** — remove the downsample-to-800Hz step and the wavelet denoising step so calibration runs at 500Hz on bandpass-filtered data only (matching what `send_live_to_CS.py` receives at inference time). `whiteM` and `W_eff` are already saved.
+2. **Retrain** — re-run calibration (`classifying_ica_components.py`) and training (`EMG_to_Avatar_model.py`) after the above change to produce a model and W_eff that match the real-time signal conditions.
 3. **Test time synchronization** — between EDF start time and liveCapture `.asset` start time (already handled in `get_time_delta()` in `prepare_data_for_model.py`)

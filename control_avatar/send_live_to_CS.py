@@ -1,17 +1,26 @@
 """
 Real-time EMG → blendshape inference → Unity TCP sender.
 
-Loads pre-trained ICA and ML artifacts from a calibration session, receives live
+Loads pre-trained ML artifacts from a calibration session, receives live
 EMG from the DAU via DataHandler, and streams blend shapes to Unity at 20 Hz.
 
+Each inference step replicates the calibration preprocessing pipeline:
+  filter → wavelet denoise → center → whiten → PICARD ICA →
+  atlas classify → reorder → normalize → RMS → scale → model
+
 Required files in data/<PARTICIPANT_ID>/<SESSION_NUMBER>/:
-    <PARTICIPANT_ID>_<SESSION_NUMBER>_<WAVELET>_W_eff.npy
-    <PARTICIPANT_ID>_<SESSION_NUMBER>_<WAVELET>_electrode_order.npy
     <PARTICIPANT_ID>_<SESSION_NUMBER>_blendshapes_<MODEL_NAME>_ICA.joblib
 
 Required files in results/:
     scaler_X_<PARTICIPANT_ID>_<SESSION_NUMBER>.joblib
     scaler_Y_<PARTICIPANT_ID>_<SESSION_NUMBER>.joblib
+
+Required atlas files in data_process/atlas/:
+    threshold.npy, cluster_1.npy … cluster_17.npy
+    side_x_coor.npy, side_y_coor.npy
+
+Required in project root:
+    side.jpg
 """
 
 import os
@@ -24,6 +33,11 @@ import numpy as np
 import pandas as pd
 import joblib
 import torch
+import pywt
+import matplotlib.pyplot as plt
+from numpy.linalg import inv
+from scipy.interpolate import griddata
+from picard import picard
 
 # ── path setup ─────────────────────────────────────────────────────────────────
 _dir        = os.path.dirname(os.path.abspath(__file__))   # control_avatar/
@@ -37,17 +51,17 @@ for _p in (_project, _data_proc, _gui, _connector):
         sys.path.insert(0, _p)
 
 from real_time_gui.xtrodes_connector.DataHandler import DataHandler
-from classifying_ica_components import filter_signal
-from prepare_data_for_model import normalize_ica_data
+from data_process.classifying_ica_components import filter_signal, center, whiten
+from data_process.prepare_data_for_model import normalize_ica_data
+from data_process.EMG_to_Avatar_model import ImprovedEnhancedTransformNet, EnhancedTransformNet, LinearTransformNet  # noqa: F401 — required for joblib/pickle to deserialize saved models
 from send_data_to_CS import fill_symetrical
 from CONSTS import mapping, blend_shapes, relevant_blendshapes
 
 # ── session config — edit these before each session ───────────────────────────
-PARTICIPANT_ID = 'participant_03'
+PARTICIPANT_ID = 'participant_04'
 SESSION_NUMBER = 'S1'
 MODEL_NAME     = 'ImprovedEnhancedTransformNet_trial_1'
 WAVELET        = 'db15'
-
 HOST_DAU       = '127.0.0.1'
 PORT_DAU       = 20001
 PORT_UNITY     = 65432
@@ -58,6 +72,7 @@ BUFFER_SECS    = 2      # total ring buffer duration
 FILTER_SECS    = 1      # context fed to filtfilt to avoid edge artifacts
 RMS_SECS       = 0.1    # RMS window — must match window_length used in training
 NUM_CHANNELS   = 16
+ICA_MAX_ITER   = 50     # PICARD iterations (reduced from 300 for real-time speed)
 
 BUFFER_SIZE    = int(FS * BUFFER_SECS)
 FILTER_CONTEXT = int(FS * FILTER_SECS)
@@ -68,14 +83,8 @@ RECORD_TYPES_A0 = {0xa0, 0xa0 | 0x8}
 # ───────────────────────────────────────────────────────────────────────────────
 
 
-def load_artifacts(data_path, results_path):
+def load_artifacts(data_path, results_path, data_proc_path, project_dir):
     session_path = os.path.join(data_path, PARTICIPANT_ID, SESSION_NUMBER)
-
-    W_eff = np.load(os.path.join(session_path,
-        f'{PARTICIPANT_ID}_{SESSION_NUMBER}_{WAVELET}_W_eff.npy'))
-
-    electrode_order = np.load(os.path.join(session_path,
-        f'{PARTICIPANT_ID}_{SESSION_NUMBER}_{WAVELET}_electrode_order.npy')).astype(int)
 
     model = joblib.load(os.path.join(session_path,
         f'{PARTICIPANT_ID}_{SESSION_NUMBER}_blendshapes_{MODEL_NAME}_ICA.joblib'))
@@ -87,31 +96,111 @@ def load_artifacts(data_path, results_path):
     scaler_Y = joblib.load(os.path.join(results_path,
         f'scaler_Y_{PARTICIPANT_ID}_{SESSION_NUMBER}.joblib'))
 
-    print(f'[Artifacts] W_eff {W_eff.shape}, electrode_order, model, scalers loaded.')
-    return W_eff, electrode_order, model, scaler_X, scaler_Y
+    atlas_dir = os.path.join(data_proc_path, 'atlas')
+    threshold = np.load(os.path.join(atlas_dir, 'threshold.npy'))
+    centroids = []
+    for i in range(1, 18):
+        c = np.load(os.path.join(atlas_dir, f'cluster_{i}.npy'))
+        centroids.append(np.nan_to_num(c, nan=0))
+
+    x_coor = np.load(os.path.join(atlas_dir, 'side_x_coor.npy'))
+    y_coor = np.load(os.path.join(atlas_dir, 'side_y_coor.npy'))
+    img = plt.imread(os.path.join(project_dir, 'side.jpg'))
+    height, width = img.shape[0], img.shape[1]
+    grid_y, grid_x = np.mgrid[1:height + 1, 1:width + 1]
+    points = np.column_stack((x_coor, y_coor))
+
+    atlas = dict(centroids=centroids, threshold=threshold,
+                 grid_x=grid_x, grid_y=grid_y, points=points,
+                 height=height, width=width)
+
+    print(f'[Artifacts] model, scalers, and atlas loaded.')
+    return model, scaler_X, scaler_Y, atlas
 
 
-def infer(ring_buf, W_eff, electrode_order, model, scaler_X, scaler_Y):
-    """Run one inference step on a snapshot of the ring buffer.
+def _denoise_chunk(data, wavelet, level=5):
+    """Wavelet thresholding applied to the full chunk (one shot, no sliding window)."""
+    result = data.copy()
+    for i in range(data.shape[0]):
+        coeffs = pywt.wavedec(data[i], wavelet, level=level)
+        for j in range(1, len(coeffs)):
+            coeffs[j] = pywt.threshold(coeffs[j], np.std(coeffs[j]))
+        reconstructed = pywt.waverec(coeffs, wavelet)
+        result[i] = reconstructed[:data.shape[1]]
+    return result
 
-    Pipeline (must match the calibration preprocessing exactly):
-      filter → apply W_eff (= W @ whiteM_calib) → reorder → normalize → RMS → scale → model
+
+def _classify_rt(W, atlas):
+    """Classify ICA components against the muscle atlas. Returns electrode_order list."""
+    inverse = np.absolute(inv(W))                     # (16, 16) mixing matrix columns
+    centroids = atlas['centroids']
+    threshold = atlas['threshold']
+    grid_x, grid_y = atlas['grid_x'], atlas['grid_y']
+    points = atlas['points']
+    height, width = atlas['height'], atlas['width']
+
+    # interpolate each ICA source's spatial map onto the face image grid
+    heatmaps = []
+    for i in range(NUM_CHANNELS):
+        h = griddata(points, inverse[:, i], (grid_x, grid_y), method='linear')
+        heatmaps.append(np.nan_to_num(h, nan=0))
+    heatmaps = np.array(heatmaps)                     # (16, height, width)
+
+    # match each component to the closest atlas centroid (mirrors calibration logic)
+    electrode_order = [0] * NUM_CHANNELS
+    flags     = [False] * 17
+    min_dists = [0.0]   * 17
+
+    for i in range(NUM_CHANNELS):
+        dists = [np.linalg.norm(heatmaps[i] - c.reshape(height, width))
+                 for c in centroids[:-1]]             # skip the noise centroid
+        closest_idx  = int(np.argmin(dists))
+        closest_dist = dists[closest_idx]
+
+        if closest_dist < threshold:
+            if not flags[closest_idx]:
+                flags[closest_idx]     = True
+                min_dists[closest_idx] = closest_dist
+                electrode_order[i]     = closest_idx
+            elif min_dists[closest_idx] > closest_dist:
+                prev = electrode_order.index(closest_idx)
+                electrode_order[prev]  = 16
+                electrode_order[i]     = closest_idx
+                min_dists[closest_idx] = closest_dist
+            else:
+                electrode_order[i] = 16
+        else:
+            electrode_order[i] = 16
+
+    return electrode_order
+
+
+def infer(ring_buf, atlas, model, scaler_X, scaler_Y):
+    """Run one inference step replicating the calibration preprocessing pipeline.
+
+    filter → wavelet denoise → center → whiten → PICARD ICA →
+    atlas classify → reorder → normalize → RMS → scale → model
     """
-    # use the last FILTER_CONTEXT samples so filtfilt has enough context
     context = ring_buf[:, -FILTER_CONTEXT:].copy()      # (16, FILTER_CONTEXT)
-    filtered = filter_signal(context, FS)                # notch + bandpass, same as calibration
 
-    # apply the composed unmixing operator — no per-chunk whitening needed
-    ica = W_eff @ filtered                               # (16, FILTER_CONTEXT)
+    filtered = filter_signal(context, FS)                # notch + bandpass
+    denoised = _denoise_chunk(filtered, WAVELET)         # wavelet thresholding
+    centered, _ = center(denoised)                       # zero-mean per channel
+    whitened, _ = whiten(centered)                       # sphering
 
-    ica_ordered = np.zeros_like(ica)
+    _, W, Y = picard(whitened, n_components=NUM_CHANNELS,
+                     ortho=True, extended=True, whiten=False,
+                     max_iter=ICA_MAX_ITER)               # (16, FILTER_CONTEXT)
+
+    electrode_order = _classify_rt(W, atlas)             # atlas muscle mapping
+
+    ica_ordered = np.zeros_like(Y)
     for i, elec in enumerate(electrode_order):
         if elec != 16:
-            ica_ordered[elec, :] = ica[i, :]
+            ica_ordered[elec, :] = Y[i, :]
 
     ica_ordered = normalize_ica_data(ica_ordered)
 
-    # RMS over the last RMS_WINDOW samples — matches window_length=0.1 used in training
     rms = np.sqrt(np.mean(ica_ordered[:, -RMS_WINDOW:] ** 2, axis=1))  # (16,)
 
     x = scaler_X.transform(rms.reshape(1, -1))          # (1, 16)
@@ -129,9 +218,10 @@ def main():
     _project_dir = os.path.dirname(_script_dir)
     data_path    = os.path.join(_project_dir, 'data')
     results_path = os.path.join(_project_dir, 'results')
+    data_proc    = os.path.join(_project_dir, 'data_process')
 
-    W_eff, electrode_order, model, scaler_X, scaler_Y = load_artifacts(
-        data_path, results_path)
+    model, scaler_X, scaler_Y, atlas = load_artifacts(
+        data_path, results_path, data_proc, _project_dir)
 
     # ring buffer shared between the collector thread and the inference loop
     ring_buf         = np.zeros((NUM_CHANNELS, BUFFER_SIZE), dtype=np.float64)
@@ -192,7 +282,7 @@ def main():
             with buf_lock:
                 snap = ring_buf.copy()
 
-            blend = infer(snap, W_eff, electrode_order, model, scaler_X, scaler_Y)
+            blend = infer(snap, atlas, model, scaler_X, scaler_Y)
             conn.sendall(blend.tobytes())
 
             elapsed = time.perf_counter() - t0
