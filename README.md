@@ -87,3 +87,17 @@ Plays the experiment videos without recording any EDF data. Instead, launches `r
 | Script hangs at "checking data stream" | Verify the sampling frequency and channel settings in the X-trodes app, then restart streaming |
 | No EDF file created | No data packets were received — check BLE connection and electrode contact |
 
+# Live Capture Setup (Unity ↔ iPad/iPhone)
+
+The `liveCapture` Unity project receives facial tracking data from an iPhone or iPad running the **Live Capture** companion app.
+
+## Steps
+
+1. **Open the Unity project** (`liveCapture/`) and navigate to the **Connections** tab in the Unity editor (Window → Live Capture → Connections).
+2. **Click Play** in Unity. The Companion App Server starts automatically on play (port **9000** by default). The Connections panel shows the available network interfaces on your machine.
+3. **On the iPad/iPhone**, open the Live Capture app, go to **Manual** connection settings, and enter:
+   - **IP address**: one of the interfaces listed in Unity — pick the one on the same subnet as the iPad.
+   - **Port**: `9000` (must match the port shown in the Unity Connections panel).
+4. **Same network**: ensure the computer and the iPad/iPhone are connected to the same Wi-Fi network.
+5. **Disable the firewall** (or add an inbound rule for port 9000) on the computer — Windows Firewall will otherwise block the incoming connection from the app.
+
