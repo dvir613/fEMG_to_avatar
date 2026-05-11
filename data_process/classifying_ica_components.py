@@ -63,7 +63,7 @@ def whiten(emg_signal):
     d = np.diag(1.0 / np.sqrt(S))
     whiteM = np.dot(U, np.dot(d, U.T))
     emg_signal = np.dot(whiteM, emg_signal)
-    return emg_signal
+    return emg_signal, whiteM
 
 
 def calc_ica_components(emg_data, wavelet, participant_ID, session_folder_path, experinment_part_name):
@@ -142,7 +142,7 @@ def perform_ica_algorithm(edf_path, participant_ID, session_number, session_fold
         print(f"Whitening signal ...")
         emg_data, mean = center(emg_data)
         # emg_data, std = standardize(emg_data)
-        emg_data = whiten(emg_data)
+        emg_data, whiteM = whiten(emg_data)
         # print(np.round(covariance(emg_data)))
         print("=====================")
         print("running ICA algorithm")
@@ -150,6 +150,12 @@ def perform_ica_algorithm(edf_path, participant_ID, session_number, session_fold
         W = calc_ica_components(emg_data, wavelet, participant_ID, session_folder_path, experinment_part_name)
         end_time_ica = pd.Timestamp.now()
         print(f"ICA time: {end_time_ica - start_time_ica}")
+        # save whitening matrix and the composed real-time unmixing operator
+        base = f"{session_folder_path}/{participant_ID}_{os.path.basename(session_folder_path)}{experinment_part_name}_{wavelet}"
+        np.save(f"{base}_whiteM", whiteM)
+        W_eff = W @ whiteM
+        np.save(f"{base}_W_eff", W_eff)
+        print(f"Saved whiteM and W_eff to {base}_whiteM.npy / W_eff.npy")
         plot_ica_heatmap(image_path, x_coor, y_coor, participant_ID, session_folder_path, number_of_channels, W, wavelet,
                          experinment_part_name)
     # end time of the processing
